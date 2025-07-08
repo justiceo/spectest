@@ -1,5 +1,6 @@
 import pc from 'picocolors';
 import { readdir } from 'fs/promises';
+import { existsSync } from 'fs';
 import path from 'path';
 
 import axios from 'axios';
@@ -57,7 +58,19 @@ function parseArgs(argv) {
 
 async function loadConfig() {
   const cliOpts = parseArgs(process.argv.slice(2));
+  const projectRoot = process.cwd();
   let cfg = { ...defaultConfig };
+
+  // attempt to load fest.config.js from the current working directory
+  try {
+    const projectCfgPath = path.join(projectRoot, 'fest.config.js');
+    if (existsSync(projectCfgPath)) {
+      const mod = await import(projectCfgPath);
+      cfg = { ...cfg, ...(mod.default || mod) };
+    }
+  } catch (err) {
+    // ignore errors loading project config
+  }
 
   if (cliOpts.configFile) {
     const mod = await import(path.resolve(cliOpts.configFile));
@@ -65,10 +78,11 @@ async function loadConfig() {
   }
 
   cfg = { ...cfg, ...cliOpts };
+  cfg.projectRoot = projectRoot;
   cfg.runningServer = cfg.runningServer || 'reuse';
 
   if (cfg.envFile) {
-    dotenv.config({ path: cfg.envFile });
+    dotenv.config({ path: path.resolve(projectRoot, cfg.envFile) });
   }
 
   API_BASE_URL = cfg.baseUrl || process.env.API_BASE_URL;
@@ -92,12 +106,12 @@ async function loadConfig() {
 
 async function discoverSuites(cfg) {
   if (cfg.suiteFile) {
-    const suitePath = path.resolve(cfg.suiteFile);
+    const suitePath = path.resolve(cfg.projectRoot || process.cwd(), cfg.suiteFile);
     const mod = await import(suitePath);
     return Array.isArray(mod.default) ? [...mod.default] : [];
   }
 
-  const suitesDir = path.resolve(cfg.suitesDir);
+  const suitesDir = path.resolve(cfg.projectRoot || process.cwd(), cfg.suitesDir);
   const files = await readdir(suitesDir);
   const pattern = new RegExp(cfg.testMatch);
   const suiteFiles = files.filter((f) => pattern.test(f)).sort();

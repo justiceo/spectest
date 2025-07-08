@@ -1,5 +1,5 @@
 {
-  "name": "@justiceo/fest",
+  "name": "spectest",
   "version": "0.1.0",
   "description": "Fetch-inspired declarative API testing framework",
   "main": "dist/cli.js",

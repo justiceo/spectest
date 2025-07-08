@@ -1,6 +1,7 @@
-# Fest - Fast Declarative API Testing
+# Fest 
+## A fetch-inpsired declarative API testing frameowork
 
-This project is a small Node.js CLI written in TypeScript for running end-to-end API tests.
+This is a framework for running end-to-end API tests in a declarative way.
 
 ## Development
 

@@ -19,7 +19,7 @@ const suite = [
     },
     response: {
       status: 201,
-      body: {
+      json: {
         id: 101,
         title: "foo",
         body: "bar",

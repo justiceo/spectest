@@ -36,14 +36,4 @@ await Promise.all([
     entryPoints: ['src/fest-helpers.ts'],
     outfile: 'dist/fest-helpers.js',
   }),
-  build({
-    ...common,
-    entryPoints: ['src/server-helper.ts'],
-    outfile: 'dist/server-helper.js',
-  }),
-  build({
-    ...common,
-    entryPoints: ['src/fest.config.ts'],
-    outfile: 'dist/fest.config.js',
-  }),
 ]);

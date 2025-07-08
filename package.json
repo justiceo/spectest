@@ -1,13 +1,13 @@
 {
-  "name": "fest",
-  "version": "1.0.0",
-  "description": "",
+  "name": "@justiceo/fest",
+  "version": "0.1.0",
+  "description": "Fetch-inspired declarative API testing framework",
   "main": "dist/cli.js",
   "scripts": {
     "build": "node build.mjs",
     "test": "npm run build && node dist/cli.js"
   },
-  "keywords": [],
+  "keywords": ["api", "testing", "declarative", "http-testing", "api-testing"],
   "author": "Justice Ogbonna",
   "license": "ISC",
   "type": "module",
@@ -21,9 +21,8 @@
     "fest": "dist/cli.js"
   },
   "exports": {
-    "./helpers": "./dist/fest-helpers.js",
-    "./server-helper": "./dist/server-helper.js",
-    ".": "./dist/cli.js"
+    ".": "./dist/cli.js",
+    "./helpers": "./dist/fest-helpers.js"
   },
   "devDependencies": {
     "esbuild": "^0.20.0",

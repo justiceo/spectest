@@ -4,5 +4,6 @@ export default {
   baseUrl: 'https://jsonplaceholder.typicode.com',
   suitesDir: './spec',
   testMatch: '\\.(suite|suites)\\.js$',
+  rps: 5,
   runningServer: 'reuse',
 };

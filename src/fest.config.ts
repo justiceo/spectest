@@ -6,5 +6,6 @@ export default {
   testMatch: '\\.(suite|suites)\\.js$',
   rps: 5,
   randomize: false,
+  bail: false,
   runningServer: 'reuse',
 };

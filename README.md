@@ -27,3 +27,9 @@ To avoid overwhelming your server during test runs, Fest supports a **requests p
 ### Randomizing test order
 
 Use the `--randomize` flag or set `randomize: true` in `fest.config.js` to shuffle tests that share the same `order` value. This helps catch hidden dependencies without changing the overall order of distinct groups.
+
+### Bailing on first failure
+
+Pass the `--bail` flag or set `bail: true` in `fest.config.js` to stop executing
+lower-order test groups once a failure is detected. Any remaining tests are
+marked as skipped in the summary.

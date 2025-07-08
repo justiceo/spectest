@@ -56,6 +56,8 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--rps=')) {
       const [, val] = arg.split('=');
       options.rps = parseInt(val, 10);
+    } else if (arg === '--bail') {
+      options.bail = true;
     } else if (arg === '--randomize') {
       options.randomize = true;
     } else if (arg === '--verbose' || arg === '-v') options.verbose = true;
@@ -412,14 +414,20 @@ function shuffle(arr) {
 }
 
 async function runTestsInOrder(tests, options = {}) {
-  const { tags, randomize } = options;
+  const { tags, randomize, bail } = options;
   const expanded = expandRepeats(tests);
   const focusResult = filterTestsByFocus(expanded);
   const tagResult = filterTestsByTags(focusResult.filtered, tags);
   const testGroups = groupTestsByOrder(tagResult.filtered);
   const skippedTests = [...focusResult.skipped, ...tagResult.skipped];
-  const allResults = await Array.from(testGroups).reduce(async (accPromise, [order, testsInGroup]) => {
+  const initial = Promise.resolve({ results: [], bail: false });
+  const final = await Array.from(testGroups).reduce(async (accPromise, [order, testsInGroup]) => {
     const accumulator = await accPromise;
+    if (accumulator.bail) {
+      skippedTests.push(...testsInGroup);
+      return accumulator;
+    }
+
     const runnableTests = testsInGroup.filter((t) => !t.skip);
     const groupSkipped = testsInGroup.filter((t) => t.skip);
     skippedTests.push(...groupSkipped);
@@ -433,9 +441,13 @@ async function runTestsInOrder(tests, options = {}) {
         return result;
       })
     );
-    return [...accumulator, ...groupResults];
-  }, Promise.resolve([]));
-  return { results: allResults, skippedTests };
+    const failed = groupResults.some((r) => !r.passed);
+    return {
+      results: [...accumulator.results, ...groupResults],
+      bail: bail && failed,
+    };
+  }, initial);
+  return { results: final.results, skippedTests };
 }
 
 async function runAllTests(cfg, verbose = false, tags = []) {
@@ -457,6 +469,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   const { results: testResults, skippedTests } = await runTestsInOrder(tests, {
     tags,
     randomize: cfg.randomize,
+    bail: cfg.bail,
   });
   const totalTestTime = Date.now() - testStart;
   const passed = testResults.filter((r) => r.passed).length;

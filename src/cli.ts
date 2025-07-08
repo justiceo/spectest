@@ -329,9 +329,11 @@ function groupTestsByOrder(tests) {
 function expandRepeats(tests) {
   return tests.flatMap((test) => {
     const repeat = Number.isFinite(Number(test.repeat)) ? Number(test.repeat) : 0;
+    const bombard = Number.isFinite(Number(test.bombard)) ? Number(test.bombard) : 0;
     const totalRuns = repeat + 1;
     const baseOrder = test.order ?? 0;
-    return Array.from({ length: totalRuns }).map((_, idx) => {
+
+    const repeated = Array.from({ length: totalRuns }).map((_, idx) => {
       if (idx === 0) {
         // eslint-disable-next-line no-param-reassign
         test.order = baseOrder;
@@ -341,6 +343,17 @@ function expandRepeats(tests) {
       clone.name = `(Run ${idx + 1}) ${test.name}`;
       clone.order = baseOrder + idx;
       return clone;
+    });
+
+    return repeated.flatMap((t) => {
+      const totalBombs = bombard + 1;
+      return Array.from({ length: totalBombs }).map((_, bIdx) => {
+        if (bIdx === 0) return t;
+        const clone = Object.assign(Object.create(Object.getPrototypeOf(t)), t);
+        clone.name = `(Bombard ${bIdx + 1}) ${t.name}`;
+        clone.order = t.order;
+        return clone;
+      });
     });
   });
 }

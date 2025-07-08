@@ -32,6 +32,14 @@ function repeat(tests, count) {
   return tests;
 }
 
+function bombard(tests, count) {
+  tests.forEach((test) => {
+    // eslint-disable-next-line no-param-reassign
+    test.bombard = count;
+  });
+  return tests;
+}
+
 function seq(tests) {
   if (tests.length === 0) return tests;
 
@@ -72,4 +80,13 @@ function skip(tests) {
   });
 }
 
-export { composeBeforeSend, composePostTest, delay, focus, repeat, seq, skip };
+export {
+  composeBeforeSend,
+  composePostTest,
+  delay,
+  focus,
+  repeat,
+  bombard,
+  seq,
+  skip,
+};

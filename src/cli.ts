@@ -56,6 +56,9 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--rps=')) {
       const [, val] = arg.split('=');
       options.rps = parseInt(val, 10);
+    } else if (arg.startsWith('--timeout=')) {
+      const [, val] = arg.split('=');
+      options.timeout = parseInt(val, 10);
     } else if (arg === '--bail') {
       options.bail = true;
     } else if (arg === '--randomize') {
@@ -100,7 +103,7 @@ async function loadConfig() {
   ALLOWED_ORIGIN = origin;
   api = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 30000,
+    timeout: cfg.timeout || 30000,
     validateStatus: () => true,
   });
 
@@ -213,6 +216,10 @@ async function runTest(test) {
   }
   const startTime = Date.now();
   const requestId = randomUUID().substring(0, 5);
+  const testTimeout =
+    typeof test.timeout === 'number' && !Number.isNaN(test.timeout)
+      ? test.timeout
+      : api.defaults.timeout;
   try {
     let config = {
       method: test.request?.method || 'GET',
@@ -238,7 +245,7 @@ async function runTest(test) {
     if (rateLimiter) {
       await rateLimiter.acquire();
     }
-    const response = await api(config);
+    const response = await api({ ...config, timeout: testTimeout });
 
     const [sessionCookie] = response.headers['set-cookie'] || [];
     if (sessionCookie) {
@@ -319,12 +326,14 @@ async function runTest(test) {
     };
   } catch (error) {
     const latency = Date.now() - startTime;
+    const isTimeout = error.code === 'ECONNABORTED' || /timeout/i.test(error.message);
     return {
       passed: false,
-      error: error.message,
+      error: isTimeout ? `Timeout after ${testTimeout}ms` : error.message,
       latency,
       requestId,
       testName: test.name,
+      timedOut: isTimeout,
     };
   }
 }
@@ -489,7 +498,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   const serverLogs = getServerLogs();
 
   testResults.forEach((result) => {
-    console.log(`[${result.passed ? '✅' : '❌'}] ${result.testName} (${result.latency}ms)`);
+    const icon = result.timedOut ? '⏰' : result.passed ? '✅' : '❌';
+    console.log(`[${icon}] ${result.testName} (${result.latency}ms)`);
 
     if (verbose || !result.passed) {
       const requestLogs = serverLogs.filter((log) => log.message.includes(result.requestId));

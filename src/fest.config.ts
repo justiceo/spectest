@@ -5,6 +5,7 @@ export default {
   suitesDir: './spec',
   testMatch: '\\.(suite|suites)\\.js$',
   rps: 5,
+  timeout: 30000,
   randomize: false,
   bail: false,
   runningServer: 'reuse',

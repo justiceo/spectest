@@ -24,6 +24,10 @@ The source code lives in `src/` and is bundled with [esbuild](https://esbuild.gi
 
 To avoid overwhelming your server during test runs, Fest supports a **requests per second (rps)** option. Set `rps` in `fest.config.js` or pass `--rps=<number>` on the command line. A simple token bucket limiter ensures that no more than the configured number of requests are sent each second.
 
+### Test timeout
+
+Use the `timeout` option to limit how long each test case may run. Specify `timeout` in `fest.config.js` or pass `--timeout=<milliseconds>` on the command line. The default is `30000` (30 seconds). Individual tests can override this by including a `timeout` property. When a request exceeds the effective timeout, the test fails with a `⏰` indicator in the summary.
+
 ### Randomizing test order
 
 Use the `--randomize` flag or set `randomize: true` in `fest.config.js` to shuffle tests that share the same `order` value. This helps catch hidden dependencies without changing the overall order of distinct groups.
@@ -33,3 +37,4 @@ Use the `--randomize` flag or set `randomize: true` in `fest.config.js` to shuff
 Pass the `--bail` flag or set `bail: true` in `fest.config.js` to stop executing
 lower-order test groups once a failure is detected. Any remaining tests are
 marked as skipped in the summary.
+

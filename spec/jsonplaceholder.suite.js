@@ -2,6 +2,7 @@ const suite = [
   {
     name: "Fetch TODO 1",
     endpoint: "/todos/1",
+    timeout: 5000,
   },
   {
     name: "Create a post",

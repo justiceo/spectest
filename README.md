@@ -13,3 +13,7 @@ npm test
 ```
 
 The source code lives in `src/` and is bundled with [esbuild](https://esbuild.github.io/) into the `dist/` directory. The helpers can be imported separately via `fest/helpers` without pulling in the CLI itself.
+
+### Controlling request rate
+
+To avoid overwhelming your server during test runs, Fest supports a **requests per second (rps)** option. Set `rps` in `fest.config.js` or pass `--rps=<number>` on the command line. A simple token bucket limiter ensures that no more than the configured number of requests are sent each second.

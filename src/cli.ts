@@ -15,10 +15,12 @@ import {
   getLogs as getServerLogs,
   setConfig as setServerHelperConfig,
 } from './server-helper.ts';
+import RateLimiter from './rate-limiter.ts';
 
 let API_BASE_URL;
 let ALLOWED_ORIGIN;
 let api;
+let rateLimiter;
 
 function parseArgs(argv) {
   const options = {};
@@ -50,6 +52,9 @@ function parseArgs(argv) {
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean);
+    } else if (arg.startsWith('--rps=')) {
+      const [, val] = arg.split('=');
+      options.rps = parseInt(val, 10);
     } else if (arg === '--verbose' || arg === '-v') options.verbose = true;
     else if (!arg.startsWith('-') && !options.suiteFile) options.suiteFile = arg;
   });
@@ -100,6 +105,8 @@ async function loadConfig() {
     serverUrl: cfg.baseUrl,
     runningServer: cfg.runningServer,
   });
+
+  rateLimiter = new RateLimiter(cfg.rps || Infinity);
 
   return cfg;
 }
@@ -223,6 +230,9 @@ async function runTest(test) {
       config = await test.beforeSend(config, immutableState);
     }
 
+    if (rateLimiter) {
+      await rateLimiter.acquire();
+    }
     const response = await api(config);
 
     const [sessionCookie] = response.headers['set-cookie'] || [];

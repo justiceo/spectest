@@ -1,7 +1,8 @@
 import pc from 'picocolors';
 import { readdir } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, realpathSync } from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import axios from 'axios';
 import { randomUUID } from 'crypto';
@@ -525,7 +526,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1]))  {
   loadConfig().then((cfg) => {
     const verbose = cfg.verbose || false;
     const tags = cfg.tags || [];

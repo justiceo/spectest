@@ -12,6 +12,12 @@ npm install
 npm test
 ```
 
+To generate an OpenAPI schema from the available test suites run:
+
+```bash
+npm run generate:openapi > openapi.json
+```
+
 The source code lives in `src/` and is bundled with [esbuild](https://esbuild.github.io/) into the `dist/` directory. The helpers can be imported separately via `fest/helpers` without pulling in the CLI itself.
 
 ### Controlling request rate

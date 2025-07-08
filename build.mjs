@@ -36,4 +36,9 @@ await Promise.all([
     entryPoints: ['src/fest-helpers.ts'],
     outfile: 'dist/fest-helpers.js',
   }),
+  build({
+    ...common,
+    entryPoints: ['src/generate-openapi.ts'],
+    outfile: 'dist/generate-openapi.js',
+  }),
 ]);

@@ -40,6 +40,9 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--startCmd=')) {
       const [, val] = arg.split('=');
       options.startCmd = val;
+    } else if (arg.startsWith('--runningServer=')) {
+      const [, val] = arg.split('=');
+      options.runningServer = val;
     } else if (arg.startsWith('--tags=')) {
       options.tags = arg
         .split('=')[1]
@@ -47,6 +50,7 @@ function parseArgs(argv) {
         .map((t) => t.trim())
         .filter(Boolean);
     } else if (arg === '--verbose' || arg === '-v') options.verbose = true;
+    else if (!arg.startsWith('-') && !options.suiteFile) options.suiteFile = arg;
   });
   return options;
 }
@@ -61,6 +65,7 @@ async function loadConfig() {
   }
 
   cfg = { ...cfg, ...cliOpts };
+  cfg.runningServer = cfg.runningServer || 'reuse';
 
   if (cfg.envFile) {
     dotenv.config({ path: cfg.envFile });
@@ -79,12 +84,19 @@ async function loadConfig() {
     allowedOrigin: ALLOWED_ORIGIN,
     startCommand: cfg.startCmd,
     serverUrl: cfg.baseUrl,
+    runningServer: cfg.runningServer,
   });
 
   return cfg;
 }
 
 async function discoverSuites(cfg) {
+  if (cfg.suiteFile) {
+    const suitePath = path.resolve(cfg.suiteFile);
+    const mod = await import(suitePath);
+    return Array.isArray(mod.default) ? [...mod.default] : [];
+  }
+
   const suitesDir = path.resolve(cfg.suitesDir);
   const files = await readdir(suitesDir);
   const pattern = new RegExp(cfg.testMatch);
@@ -168,6 +180,11 @@ function validateWithSchema(data, schema) {
 }
 
 async function runTest(test) {
+  if (typeof test.delay === 'number' && test.delay > 0) {
+    await new Promise((resolve) => {
+      setTimeout(resolve, test.delay);
+    });
+  }
   const startTime = Date.now();
   const requestId = randomUUID().substring(0, 5);
   try {
@@ -295,6 +312,25 @@ function groupTestsByOrder(tests) {
   return new Map([...testGroups.entries()].sort(([a], [b]) => a - b));
 }
 
+function expandRepeats(tests) {
+  return tests.flatMap((test) => {
+    const repeat = Number.isFinite(Number(test.repeat)) ? Number(test.repeat) : 0;
+    const totalRuns = repeat + 1;
+    const baseOrder = test.order ?? 0;
+    return Array.from({ length: totalRuns }).map((_, idx) => {
+      if (idx === 0) {
+        // eslint-disable-next-line no-param-reassign
+        test.order = baseOrder;
+        return test;
+      }
+      const clone = Object.assign(Object.create(Object.getPrototypeOf(test)), test);
+      clone.name = `(Run ${idx + 1}) ${test.name}`;
+      clone.order = baseOrder + idx;
+      return clone;
+    });
+  });
+}
+
 function filterTestsByFocus(tests) {
   const focused = tests.filter((t) => t.focus);
   if (focused.length > 0) {
@@ -330,7 +366,8 @@ function filterTestsByTags(tests, tags) {
 
 async function runTestsInOrder(tests, options = {}) {
   const { tags } = options;
-  const focusResult = filterTestsByFocus(tests);
+  const expanded = expandRepeats(tests);
+  const focusResult = filterTestsByFocus(expanded);
   const tagResult = filterTestsByTags(focusResult.filtered, tags);
   const testGroups = groupTestsByOrder(tagResult.filtered);
   const skippedTests = [...focusResult.skipped, ...tagResult.skipped];
@@ -352,6 +389,7 @@ async function runTestsInOrder(tests, options = {}) {
 }
 
 async function runAllTests(cfg, verbose = false, tags = []) {
+  const progStart = Date.now();
   console.log(`🚀 Starting E2E Tests against ${API_BASE_URL}`);
   console.log('='.repeat(50));
 
@@ -365,8 +403,9 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   console.log('📋 Running tests...');
+  const testStart = Date.now();
   const { results: testResults, skippedTests } = await runTestsInOrder(tests, { tags });
-
+  const totalTestTime = Date.now() - testStart;
   const passed = testResults.filter((r) => r.passed).length;
   const total = testResults.length;
   const skipped = skippedTests.length;
@@ -435,6 +474,10 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   await stopServerHelper();
+
+  const totalTime = Date.now() - progStart;
+  console.log(`⏲️  Testing time: ${(totalTestTime / 1000).toFixed(2)}s`);
+  console.log(`⏲️  Elapsed time (incl. server startup/teardown): ${(totalTime / 1000).toFixed(2)}s`);
 
   if (passed === total) {
     console.log(`🎉  ${passed}/${total} tests passed!`);

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { randomUUID } from 'crypto';
 
 let allowedOrigin = '';
@@ -9,6 +9,7 @@ let startedByHelper = false;
 const serverLogs = [];
 let startCommand = 'npm run start';
 let serverUrl = 'http://localhost:8080';
+let runningServer = 'reuse';
 
 function setStartCommand(cmd) {
   if (cmd) startCommand = cmd;
@@ -22,6 +23,20 @@ function setConfig(cfg = {}) {
   if (cfg.allowedOrigin) allowedOrigin = cfg.allowedOrigin;
   if (cfg.startCommand) setStartCommand(cfg.startCommand);
   if (cfg.serverUrl) setServerUrl(cfg.serverUrl);
+  if (cfg.runningServer) runningServer = cfg.runningServer;
+}
+
+function killProcessOnPort(port) {
+  try {
+    const pids =
+      spawnSync('lsof', ['-ti', `:${port}`], { encoding: 'utf8' }).stdout.trim();
+    if (pids) {
+      spawnSync('kill', ['-9', ...pids.split('\n')]);
+      console.log(`🛑 Killed process(es) on port ${port}: ${pids}`);
+    }
+  } catch (err) {
+    console.error(`Failed to kill process on port ${port}:`, err.message);
+  }
 }
 
 async function stop() {
@@ -47,6 +62,12 @@ async function isRunning() {
     const response = await axios.get(`${serverUrl}/v1/ping`, {
       timeout: 3000,
       validateStatus: () => true,
+      headers: {
+        'x-request-id': requestID,
+        'x-recaptcha-token': `test-token-${requestID}`,
+        Origin: allowedOrigin,
+        'X-Requested-With': 'XMLHttpRequest',
+      },
     });
     return response.status === 200;
   } catch {
@@ -56,9 +77,18 @@ async function isRunning() {
 
 async function start() {
   if (await isRunning()) {
-    console.log(`✅ Using existing server at ${serverUrl}`);
-    startedByHelper = false;
-    return Promise.resolve();
+    if (runningServer === 'reuse') {
+      console.log(`✅ Using existing server at ${serverUrl}`);
+      startedByHelper = false;
+      return Promise.resolve();
+    }
+    if (runningServer === 'fail') {
+      throw new Error('Server already running');
+    }
+    if (runningServer === 'kill') {
+      const port = new URL(serverUrl).port || '8080';
+      killProcessOnPort(port);
+    }
   }
 
   return new Promise((resolve, reject) => {

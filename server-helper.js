@@ -58,18 +58,13 @@ async function stop() {
 
 async function isRunning() {
   try {
-    const requestID = randomUUID().substring(0, 5);
-    const response = await axios.get(`${serverUrl}/v1/ping`, {
+    const response = await axios.request({
+      method: 'HEAD',
+      url: serverUrl,
       timeout: 3000,
       validateStatus: () => true,
-      headers: {
-        'x-request-id': requestID,
-        'x-recaptcha-token': `test-token-${requestID}`,
-        Origin: allowedOrigin,
-        'X-Requested-With': 'XMLHttpRequest',
-      },
     });
-    return response.status === 200;
+    return response.status >= 200 && response.status < 500;
   } catch {
     return false;
   }

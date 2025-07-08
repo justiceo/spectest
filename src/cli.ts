@@ -7,13 +7,13 @@ import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 
-import defaultConfig from './fest.config.js';
+import defaultConfig from './fest.config.ts';
 import {
   start as startServerHelper,
   stop as stopServerHelper,
   getLogs as getServerLogs,
   setConfig as setServerHelperConfig,
-} from './server-helper.js';
+} from './server-helper.ts';
 
 let API_BASE_URL;
 let ALLOWED_ORIGIN;

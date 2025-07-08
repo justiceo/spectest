@@ -2,9 +2,10 @@
   "name": "fest",
   "version": "1.0.0",
   "description": "",
-  "main": "fest.js",
+  "main": "dist/cli.js",
   "scripts": {
-    "test": "node fest.js"
+    "build": "node build.mjs",
+    "test": "npm run build && node dist/cli.js"
   },
   "keywords": [],
   "author": "Justice Ogbonna",
@@ -15,5 +16,17 @@
     "dotenv": "^17.0.1",
     "picocolors": "^1.1.1",
     "zod": "^3.25.75"
+  },
+  "bin": {
+    "fest": "dist/cli.js"
+  },
+  "exports": {
+    "./helpers": "./dist/fest-helpers.js",
+    "./server-helper": "./dist/server-helper.js",
+    ".": "./dist/cli.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.5"
   }
 }

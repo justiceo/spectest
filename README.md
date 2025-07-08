@@ -17,3 +17,7 @@ The source code lives in `src/` and is bundled with [esbuild](https://esbuild.gi
 ### Controlling request rate
 
 To avoid overwhelming your server during test runs, Fest supports a **requests per second (rps)** option. Set `rps` in `fest.config.js` or pass `--rps=<number>` on the command line. A simple token bucket limiter ensures that no more than the configured number of requests are sent each second.
+
+### Randomizing test order
+
+Use the `--randomize` flag or set `randomize: true` in `fest.config.js` to shuffle tests that share the same `order` value. This helps catch hidden dependencies without changing the overall order of distinct groups.

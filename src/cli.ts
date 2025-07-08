@@ -56,6 +56,8 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--rps=')) {
       const [, val] = arg.split('=');
       options.rps = parseInt(val, 10);
+    } else if (arg === '--randomize') {
+      options.randomize = true;
     } else if (arg === '--verbose' || arg === '-v') options.verbose = true;
     else if (!arg.startsWith('-') && !options.suiteFile) options.suiteFile = arg;
   });
@@ -402,8 +404,15 @@ function filterTestsByTags(tests, tags) {
   return { filtered, skipped };
 }
 
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
 async function runTestsInOrder(tests, options = {}) {
-  const { tags } = options;
+  const { tags, randomize } = options;
   const expanded = expandRepeats(tests);
   const focusResult = filterTestsByFocus(expanded);
   const tagResult = filterTestsByTags(focusResult.filtered, tags);
@@ -414,6 +423,9 @@ async function runTestsInOrder(tests, options = {}) {
     const runnableTests = testsInGroup.filter((t) => !t.skip);
     const groupSkipped = testsInGroup.filter((t) => t.skip);
     skippedTests.push(...groupSkipped);
+    if (randomize) {
+      shuffle(runnableTests);
+    }
     console.log(`📋 Running tests with order ${order} (${runnableTests.length} tests)...`);
     const groupResults = await Promise.all(
       runnableTests.map(async (test) => {
@@ -442,7 +454,10 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 
   console.log('📋 Running tests...');
   const testStart = Date.now();
-  const { results: testResults, skippedTests } = await runTestsInOrder(tests, { tags });
+  const { results: testResults, skippedTests } = await runTestsInOrder(tests, {
+    tags,
+    randomize: cfg.randomize,
+  });
   const totalTestTime = Date.now() - testStart;
   const passed = testResults.filter((r) => r.passed).length;
   const total = testResults.length;

@@ -1,5 +1,7 @@
 import { readdir } from 'fs/promises';
 import path from 'path';
+import { realpathSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 interface TestCase {
   name: string;
@@ -90,7 +92,7 @@ export async function generateOpenApi() {
   return spec;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
   generateOpenApi().then((spec) => {
     console.log(JSON.stringify(spec, null, 2));
   });

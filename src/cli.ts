@@ -1,5 +1,5 @@
 import pc from 'picocolors';
-import { readdir } from 'fs/promises';
+import { readdir, writeFile, readFile } from 'fs/promises';
 import { existsSync, realpathSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -55,6 +55,9 @@ function parseArgs(argv) {
     } else if (arg.startsWith('--timeout=')) {
       const [, val] = arg.split('=');
       options.timeout = parseInt(val, 10);
+    } else if (arg.startsWith('--snapshot=')) {
+      const [, val] = arg.split('=');
+      options.snapshotFile = val;
     } else if (arg === '--bail') {
       options.bail = true;
     } else if (arg === '--randomize') {
@@ -321,6 +324,12 @@ async function runTest(test) {
       latency,
       requestId,
       testName: test.name,
+      request: config,
+      response: {
+        status: response.status,
+        headers: response.headers,
+        data: response.data,
+      },
     };
   } catch (error) {
     const latency = Date.now() - startTime;
@@ -332,6 +341,14 @@ async function runTest(test) {
       requestId,
       testName: test.name,
       timedOut: isTimeout,
+      request: error.config || undefined,
+      response: error.response
+        ? {
+            status: error.response.status,
+            headers: error.response.headers,
+            data: error.response.data,
+          }
+        : undefined,
     };
   }
 }
@@ -563,6 +580,56 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     if (slowTests.length > 0) {
       console.log(`\n🐢 Slowest ${slowTests.length} Tests:`);
       console.table(slowTests.map((t) => ({ Test: t.testName, 'Latency (ms)': t.latency })));
+    }
+  }
+  
+  if (cfg.snapshotFile) {
+    const snapshotCases = testResults.map((r) => ({
+      name: r.testName,
+      request: r.request,
+      response: r.response,
+      status: r.timedOut ? 'timeout' : r.passed ? 'pass' : 'fail',
+      latency: r.latency,
+    }));
+
+    const snapshotPath = path.resolve(cfg.snapshotFile);
+    let existing = { lastUpdate: '', cases: [] };
+    if (existsSync(snapshotPath)) {
+      try {
+        const raw = JSON.parse(await readFile(snapshotPath, 'utf8'));
+        if (Array.isArray(raw)) existing.cases = raw;
+        else if (raw && Array.isArray(raw.cases)) existing = raw;
+      } catch (err) {
+        console.error('Failed to read existing snapshot, starting fresh.');
+      }
+    }
+
+    const map = new Map(existing.cases.map((c) => [c.name, c]));
+    snapshotCases.forEach((c) => {
+      map.set(c.name, c);
+    });
+
+    const timestamp = new Date()
+      .toLocaleString('en-US', {
+        timeZone: 'America/Los_Angeles',
+        hour12: false,
+        month: '2-digit',
+        day: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        timeZoneName: 'short',
+      })
+      .replace(', ', ' ')
+      .replace(/\s(\w+)$/, '$1');
+
+    const merged = { lastUpdate: timestamp, cases: Array.from(map.values()) };
+
+    try {
+      await writeFile(snapshotPath, JSON.stringify(merged, null, 2));
+      console.log(`\uD83D\uDCF8 Snapshot saved to ${cfg.snapshotFile}`);
+    } catch (err) {
+      console.error('Failed to write snapshot:', err.message);
     }
   }
 

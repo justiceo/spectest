@@ -137,7 +137,16 @@ async function runTest(test) {
     });
   }
   const startTime = Date.now();
-  const requestId = randomUUID().substring(0, 5);
+  let providedId;
+  if (test.request?.headers) {
+    for (const [h, v] of Object.entries(test.request.headers)) {
+      if (h.toLowerCase() === 'x-request-id') {
+        providedId = String(v);
+        break;
+      }
+    }
+  }
+  const requestId = providedId || randomUUID().substring(0, 5);
   const testTimeout =
     typeof test.timeout === 'number' && !Number.isNaN(test.timeout)
       ? test.timeout

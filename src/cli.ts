@@ -3,15 +3,20 @@ import { readdir, writeFile, readFile } from 'fs/promises';
 import { existsSync, realpathSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createRequire } from 'module';
 
 import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import dotenv from 'dotenv';
 
-import defaultConfig from './fest.config.ts';
+import { loadConfig } from './config.ts';
 import Server from './server.ts';
 import RateLimiter from './rate-limiter.ts';
+
+// Provide CommonJS require for bundled dependencies like commander
+// eslint-disable-next-line no-global-assign
+// @ts-ignore
+globalThis.require = createRequire(import.meta.url);
 
 let API_BASE_URL;
 let ALLOWED_ORIGIN;
@@ -19,86 +24,7 @@ let api;
 let rateLimiter;
 const server = new Server();
 
-function parseArgs(argv) {
-  const options = {};
-  argv.forEach((arg) => {
-    if (arg.startsWith('--config=')) {
-      const [, val] = arg.split('=');
-      options.configFile = val;
-    } else if (arg.startsWith('--env=')) {
-      const [, val] = arg.split('=');
-      options.envFile = val;
-    } else if (arg.startsWith('--baseUrl=')) {
-      const [, val] = arg.split('=');
-      options.baseUrl = val;
-    } else if (arg.startsWith('--suitesDir=')) {
-      const [, val] = arg.split('=');
-      options.suitesDir = val;
-    } else if (arg.startsWith('--testMatch=')) {
-      const [, val] = arg.split('=');
-      options.testMatch = val;
-    } else if (arg.startsWith('--startCmd=')) {
-      const [, val] = arg.split('=');
-      options.startCmd = val;
-    } else if (arg.startsWith('--runningServer=')) {
-      const [, val] = arg.split('=');
-      options.runningServer = val;
-    } else if (arg.startsWith('--tags=')) {
-      options.tags = arg
-        .split('=')[1]
-        .split(',')
-        .map((t) => t.trim())
-        .filter(Boolean);
-    } else if (arg.startsWith('--rps=')) {
-      const [, val] = arg.split('=');
-      options.rps = parseInt(val, 10);
-    } else if (arg.startsWith('--timeout=')) {
-      const [, val] = arg.split('=');
-      options.timeout = parseInt(val, 10);
-    } else if (arg.startsWith('--snapshot=')) {
-      const [, val] = arg.split('=');
-      options.snapshotFile = val;
-    } else if (arg === '--bail') {
-      options.bail = true;
-    } else if (arg === '--randomize') {
-      options.randomize = true;
-    } else if (arg === '--happy') {
-      options.happy = true;
-    } else if (arg === '--verbose' || arg === '-v') options.verbose = true;
-    else if (!arg.startsWith('-') && !options.suiteFile) options.suiteFile = arg;
-  });
-  return options;
-}
-
-async function loadConfig() {
-  const cliOpts = parseArgs(process.argv.slice(2));
-  const projectRoot = process.cwd();
-  let cfg = { ...defaultConfig };
-
-  // attempt to load fest.config.js from the current working directory
-  try {
-    const projectCfgPath = path.join(projectRoot, 'fest.config.js');
-    if (existsSync(projectCfgPath)) {
-      const mod = await import(projectCfgPath);
-      cfg = { ...cfg, ...(mod.default || mod) };
-    }
-  } catch (err) {
-    // ignore errors loading project config
-  }
-
-  if (cliOpts.configFile) {
-    const mod = await import(path.resolve(cliOpts.configFile));
-    cfg = { ...cfg, ...(mod.default || mod) };
-  }
-
-  cfg = { ...cfg, ...cliOpts };
-  cfg.projectRoot = projectRoot;
-  cfg.runningServer = cfg.runningServer || 'reuse';
-
-  if (cfg.envFile) {
-    dotenv.config({ path: path.resolve(projectRoot, cfg.envFile) });
-  }
-
+function setupEnvironment(cfg) {
   API_BASE_URL = cfg.baseUrl || process.env.API_BASE_URL;
   const [origin] = (process.env.ALLOWED_ORIGINS || '').split(',');
   ALLOWED_ORIGIN = origin;
@@ -116,8 +42,6 @@ async function loadConfig() {
   });
 
   rateLimiter = new RateLimiter(cfg.rps || Infinity);
-
-  return cfg;
 }
 
 async function discoverSuites(cfg) {
@@ -649,7 +573,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 }
 
 if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1]))  {
-  loadConfig().then((cfg) => {
+  loadConfig(process.argv).then((cfg) => {
+    setupEnvironment(cfg);
     const verbose = cfg.verbose || false;
     const tags = cfg.tags || [];
     runAllTests(cfg, verbose, tags).catch(console.error);

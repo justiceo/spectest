@@ -4,6 +4,7 @@ const external = [
   'axios',
   'dotenv',
   'picocolors',
+  'commander',
   'zod',
   'fs',
   'path',

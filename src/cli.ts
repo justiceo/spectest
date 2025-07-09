@@ -3,7 +3,6 @@ import { readdir, writeFile, readFile } from 'fs/promises';
 import { existsSync, realpathSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
 
 import axios from 'axios';
 import { randomUUID } from 'crypto';
@@ -13,10 +12,6 @@ import { loadConfig } from './config.ts';
 import Server from './server.ts';
 import RateLimiter from './rate-limiter.ts';
 
-// Provide CommonJS require for bundled dependencies like commander
-// eslint-disable-next-line no-global-assign
-// @ts-ignore
-globalThis.require = createRequire(import.meta.url);
 
 let API_BASE_URL;
 let ALLOWED_ORIGIN;
@@ -164,7 +159,8 @@ async function runTest(test) {
 
     if (typeof test.beforeSend === 'function') {
       const immutableState = JSON.parse(JSON.stringify(testState));
-      config = await test.beforeSend(config, immutableState);
+      const updatedConfig = await test.beforeSend(config, immutableState);
+      if (updatedConfig) config = updatedConfig;
     }
 
     if (rateLimiter) {
@@ -423,6 +419,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 
   const tests = await discoverSuites(cfg);
 
+  // TODO: Do not proceed if tests array is empty.
+
   try {
     await server.start();
   } catch (error) {
@@ -558,6 +556,9 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   await server.stop();
+  if (rateLimiter) {
+    rateLimiter.stop();
+  }
 
   const totalTime = Date.now() - progStart;
   console.log(`⏲️  Testing time: ${(totalTestTime / 1000).toFixed(2)}s`);

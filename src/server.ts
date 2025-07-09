@@ -32,10 +32,40 @@ class Server {
 
   private killProcessOnPort(port: string): void {
     try {
-      const pids = spawnSync('lsof', ['-ti', `:${port}`], { encoding: 'utf8' }).stdout.trim();
-      if (pids) {
-        spawnSync('kill', ['-9', ...pids.split('\n')]);
-        console.log(`🛑 Killed process(es) on port ${port}: ${pids}`);
+      const isWindows = process.platform === 'win32';
+      let pids: string[] = [];
+
+      if (isWindows) {
+        const { stdout } = spawnSync('netstat', ['-ano', '-p', 'tcp'], { encoding: 'utf8' });
+        stdout
+          .split('\n')
+          .forEach((line) => {
+            if (line.includes(`:${port}`)) {
+              const parts = line.trim().split(/\s+/);
+              const pid = parts[parts.length - 1];
+              if (pid && pid !== '0') pids.push(pid);
+            }
+          });
+
+        // Kill found pids using taskkill
+        [...new Set(pids)].forEach((pid) => {
+          spawnSync('taskkill', ['/PID', pid, '/F', '/T']);
+        });
+      } else {
+        const { stdout } = spawnSync('lsof', ['-ti', `:${port}`], { encoding: 'utf8' });
+        pids = stdout.trim().split('\n').filter(Boolean);
+
+        pids.forEach((pid) => {
+          try {
+            process.kill(parseInt(pid, 10), 'SIGKILL');
+          } catch {
+            // ignore if unable to kill
+          }
+        });
+      }
+
+      if (pids.length) {
+        console.log(`🛑 Killed process(es) on port ${port}: ${pids.join(', ')}`);
       }
     } catch (err: any) {
       console.error(`Failed to kill process on port ${port}:`, err.message);

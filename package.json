@@ -33,7 +33,8 @@
     "./helpers": "./dist/fest-helpers.js"
   },
   "devDependencies": {
-    "esbuild": "^0.20.0",
+    "@types/node": "^24.0.12",
+    "esbuild": "^0.25.6",
     "typescript": "^5.4.5"
   }
 }

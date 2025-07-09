@@ -38,6 +38,13 @@ class RateLimiter {
       this.queue.push(resolve);
     });
   }
+
+  stop() {
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+  }
 }
 
 export default RateLimiter;

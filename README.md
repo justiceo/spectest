@@ -38,3 +38,9 @@ Pass the `--bail` flag or set `bail: true` in `fest.config.js` to stop executing
 lower-order test groups once a failure is detected. Any remaining tests are
 marked as skipped in the summary.
 
+### Happy path filtering
+
+Use the `--happy` flag or set `happy: true` in `fest.config.js` to run only
+tests whose expected `response.status` falls between 200 and 299. If a test
+omits `response.status` it is treated as `200` for this check.
+

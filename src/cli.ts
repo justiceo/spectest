@@ -63,6 +63,8 @@ function parseArgs(argv) {
       options.bail = true;
     } else if (arg === '--randomize') {
       options.randomize = true;
+    } else if (arg === '--happy') {
+      options.happy = true;
     } else if (arg === '--verbose' || arg === '-v') options.verbose = true;
     else if (!arg.startsWith('-') && !options.suiteFile) options.suiteFile = arg;
   });
@@ -415,6 +417,23 @@ function filterTestsByTags(tests, tags) {
   return { filtered, skipped };
 }
 
+function filterTestsByHappy(tests, happy) {
+  if (!happy) {
+    return { filtered: [...tests], skipped: [] };
+  }
+  const filtered = [];
+  const skipped = [];
+  tests.forEach((test) => {
+    const status = typeof test.response?.status === 'number' ? test.response.status : 200;
+    if (status >= 200 && status < 300) {
+      filtered.push(test);
+    } else {
+      skipped.push(test);
+    }
+  });
+  return { filtered, skipped };
+}
+
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -423,12 +442,13 @@ function shuffle(arr) {
 }
 
 async function runTestsInOrder(tests, options = {}) {
-  const { tags, randomize, bail } = options;
+  const { tags, randomize, bail, happy } = options;
   const expanded = expandRepeats(tests);
   const focusResult = filterTestsByFocus(expanded);
   const tagResult = filterTestsByTags(focusResult.filtered, tags);
-  const testGroups = groupTestsByOrder(tagResult.filtered);
-  const skippedTests = [...focusResult.skipped, ...tagResult.skipped];
+  const happyResult = filterTestsByHappy(tagResult.filtered, happy);
+  const testGroups = groupTestsByOrder(happyResult.filtered);
+  const skippedTests = [...focusResult.skipped, ...tagResult.skipped, ...happyResult.skipped];
   const initial = Promise.resolve({ results: [], bail: false });
   const final = await Array.from(testGroups).reduce(async (accPromise, [order, testsInGroup]) => {
     const accumulator = await accPromise;
@@ -479,6 +499,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     tags,
     randomize: cfg.randomize,
     bail: cfg.bail,
+    happy: cfg.happy,
   });
   const totalTestTime = Date.now() - testStart;
   const passed = testResults.filter((r) => r.passed).length;

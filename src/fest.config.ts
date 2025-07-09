@@ -8,5 +8,6 @@ export default {
   timeout: 30000,
   randomize: false,
   bail: false,
+  happy: false,
   runningServer: 'reuse',
 };

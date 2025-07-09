@@ -20,6 +20,7 @@ export interface CliConfig {
   randomize?: boolean;
   happy?: boolean;
   verbose?: boolean;
+  userAgent?: string;
   suiteFile?: string;
   projectRoot?: string;
 }
@@ -45,6 +46,8 @@ function createProgram() {
     .option('-z, --randomize', 'randomize tests with the same order')
     .option('--happy', 'run only tests expecting 2xx status')
     .option('-v, --verbose', 'verbose output')
+    .option('--user-agent <ua>', 'user agent to use for requests')
+    .option('--ua <ua>', 'alias for --user-agent')
     .argument('[suiteFile]', 'run a specific suite file');
   return program;
 }
@@ -72,6 +75,7 @@ function parseArgs(argv: string[]): CliConfig {
     randomize: opts.randomize,
     happy: opts.happy,
     verbose: opts.verbose,
+    userAgent: opts.userAgent || opts.ua,
     suiteFile,
   };
 

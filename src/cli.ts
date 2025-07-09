@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { loadConfig } from './config.ts';
 import Server from './server.ts';
 import RateLimiter from './rate-limiter.ts';
+import { resolveUserAgent } from './user-agents.ts';
 
 
 let API_BASE_URL;
@@ -28,6 +29,7 @@ function setupEnvironment(cfg) {
     timeout: cfg.timeout || 30000,
     validateStatus: () => true,
   });
+  api.defaults.headers.common['User-Agent'] = resolveUserAgent(cfg.userAgent);
 
   server.setConfig({
     allowedOrigin: ALLOWED_ORIGIN,

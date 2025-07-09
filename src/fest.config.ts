@@ -10,4 +10,5 @@ export default {
   bail: false,
   happy: false,
   runningServer: 'reuse',
+  userAgent: 'chrome_windows',
 };

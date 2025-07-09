@@ -53,4 +53,13 @@ Use the `--happy` flag or set `happy: true` in `fest.config.js` to run only
 tests whose expected `response.status` falls between 200 and 299. If a test
 omits `response.status` it is treated as `200` for this check.
 
+### Setting the User-Agent
+
+All requests use a browser-like **User-Agent** header. Specify a custom agent
+using `--user-agent=<name>` (or `--ua=<name>`) or set `userAgent` in
+`fest.config.js`. The value may be one of the pre-defined names from
+`chrome_windows`, `chrome_mac`, `chrome_android`, `chrome_ios`, `edge_windows`,
+`safari_mac`, `safari_ios`, `firefox_windows`, `firefox_mac`, or
+`opera_windows`. Any other value is used literally.
+
 

@@ -1,4 +1,6 @@
-# Fest 
+# Fest
+[![Build](https://github.com/owner/repo/actions/workflows/build.yml/badge.svg)](https://github.com/owner/repo/actions/workflows/build.yml)
+[![Test](https://github.com/owner/repo/actions/workflows/test.yml/badge.svg)](https://github.com/owner/repo/actions/workflows/test.yml)
 ## A fetch-inpsired declarative API testing frameowork
 
 This is a framework for running end-to-end API tests in a declarative way.

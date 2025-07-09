@@ -10,18 +10,14 @@ import { z } from 'zod';
 import dotenv from 'dotenv';
 
 import defaultConfig from './fest.config.ts';
-import {
-  start as startServerHelper,
-  stop as stopServerHelper,
-  getLogs as getServerLogs,
-  setConfig as setServerHelperConfig,
-} from './server-helper.ts';
+import Server from './server.ts';
 import RateLimiter from './rate-limiter.ts';
 
 let API_BASE_URL;
 let ALLOWED_ORIGIN;
 let api;
 let rateLimiter;
+const server = new Server();
 
 function parseArgs(argv) {
   const options = {};
@@ -109,7 +105,7 @@ async function loadConfig() {
     validateStatus: () => true,
   });
 
-  setServerHelperConfig({
+  server.setConfig({
     allowedOrigin: ALLOWED_ORIGIN,
     startCommand: cfg.startCmd,
     serverUrl: cfg.baseUrl,
@@ -255,7 +251,7 @@ async function runTest(test) {
     }
 
     if (typeof test.postTest === 'function') {
-      const requestLogs = getServerLogs().filter((log) => log.message.includes(requestId));
+      const requestLogs = server.getLogs().filter((log) => log.message.includes(requestId));
       await test.postTest(response, testState, { requestId, logs: requestLogs });
     }
 
@@ -487,7 +483,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   const tests = await discoverSuites(cfg);
 
   try {
-    await startServerHelper();
+    await server.start();
   } catch (error) {
     console.error('❌ Failed to start server:', error.message);
     process.exit(1);
@@ -516,7 +512,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   console.log('\n📊 Test Summary:');
-  const serverLogs = getServerLogs();
+  const serverLogs = server.getLogs();
 
   testResults.forEach((result) => {
     const icon = result.timedOut ? '⏰' : result.passed ? '✅' : '❌';
@@ -570,7 +566,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     }
   }
 
-  await stopServerHelper();
+  await server.stop();
 
   const totalTime = Date.now() - progStart;
   console.log(`⏲️  Testing time: ${(totalTestTime / 1000).toFixed(2)}s`);
@@ -595,13 +591,13 @@ if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1]))  {
 
 process.on('SIGINT', async () => {
   console.log('\n🛑 Received SIGINT, shutting down gracefully...');
-  await stopServerHelper();
+  await server.stop();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   console.log('\n🛑 Received SIGTERM, shutting down gracefully...');
-  await stopServerHelper();
+  await server.stop();
   process.exit(0);
 });
 

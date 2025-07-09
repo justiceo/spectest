@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import path from 'path';
 import { existsSync } from 'fs';
 import dotenv from 'dotenv';
-import defaultConfig from './fest.config.ts';
+import defaultConfig from './default.config.ts';
 
 export interface CliConfig {
   configFile?: string;
@@ -28,7 +28,7 @@ export interface CliConfig {
 function createProgram() {
   const program = new Command();
   program
-    .name('fest')
+    .name('spectest')
     .description('Fetch-inspired declarative API testing framework')
     .version('0.1.0')
     .option('-c, --config <path>', 'path to additional config file')
@@ -93,7 +93,7 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   let cfg: CliConfig = { ...defaultConfig } as CliConfig;
 
   try {
-    const projectCfgPath = path.join(projectRoot, 'fest.config.js');
+    const projectCfgPath = path.join(projectRoot, 'spectest.config.js');
     if (existsSync(projectCfgPath)) {
       const mod = await import(projectCfgPath);
       cfg = { ...cfg, ...(mod.default || mod) };

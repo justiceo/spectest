@@ -1,6 +1,6 @@
-# Fest
-[![Build](https://github.com/owner/repo/actions/workflows/build.yml/badge.svg)](https://github.com/owner/repo/actions/workflows/build.yml)
-[![Test](https://github.com/owner/repo/actions/workflows/test.yml/badge.svg)](https://github.com/owner/repo/actions/workflows/test.yml)
+# Spectest
+[![Build](https://github.com/justiceo/spectest/actions/workflows/build.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/build.yml)
+[![Test](https://github.com/justiceo/spectest/actions/workflows/test.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/test.yml)
 ## A fetch-inpsired declarative API testing frameowork
 
 This is a framework for running end-to-end API tests in a declarative way.
@@ -20,23 +20,23 @@ To generate an OpenAPI schema from the available test suites run:
 npm run generate:openapi > openapi.json
 ```
 
-The source code lives in `src/` and is bundled with [esbuild](https://esbuild.github.io/) into the `dist/` directory. The helpers can be imported separately via `fest/helpers` without pulling in the CLI itself.
+The source code lives in `src/` and is bundled with [esbuild](https://esbuild.github.io/) into the `dist/` directory. The helpers can be imported separately via `spectest/helpers` without pulling in the CLI itself.
 
 ### Controlling request rate
 
-To avoid overwhelming your server during test runs, Fest supports a **requests per second (rps)** option. Set `rps` in `fest.config.js` or pass `--rps=<number>` on the command line. A simple token bucket limiter ensures that no more than the configured number of requests are sent each second.
+To avoid overwhelming your server during test runs, Spectest supports a **requests per second (rps)** option. Set `rps` in `spectest.config.js` or pass `--rps=<number>` on the command line. A simple token bucket limiter ensures that no more than the configured number of requests are sent each second.
 
 ### Test timeout
 
-Use the `timeout` option to limit how long each test case may run. Specify `timeout` in `fest.config.js` or pass `--timeout=<milliseconds>` on the command line. The default is `30000` (30 seconds). Individual tests can override this by including a `timeout` property. When a request exceeds the effective timeout, the test fails with a `⏰` indicator in the summary.
+Use the `timeout` option to limit how long each test case may run. Specify `timeout` in `spectest.config.js` or pass `--timeout=<milliseconds>` on the command line. The default is `30000` (30 seconds). Individual tests can override this by including a `timeout` property. When a request exceeds the effective timeout, the test fails with a `⏰` indicator in the summary.
 
 ### Randomizing test order
 
-Use the `--randomize` flag or set `randomize: true` in `fest.config.js` to shuffle tests that share the same `order` value. This helps catch hidden dependencies without changing the overall order of distinct groups.
+Use the `--randomize` flag or set `randomize: true` in `spectest.config.js` to shuffle tests that share the same `order` value. This helps catch hidden dependencies without changing the overall order of distinct groups.
 
 ### Bailing on first failure
 
-Pass the `--bail` flag or set `bail: true` in `fest.config.js` to stop executing
+Pass the `--bail` flag or set `bail: true` in `spectest.config.js` to stop executing
 lower-order test groups once a failure is detected. Any remaining tests are
 marked as skipped in the summary.
 
@@ -51,7 +51,7 @@ overwritten so skipped tests keep their previous data.
 
 ### Happy path filtering
 
-Use the `--happy` flag or set `happy: true` in `fest.config.js` to run only
+Use the `--happy` flag or set `happy: true` in `spectest.config.js` to run only
 tests whose expected `response.status` falls between 200 and 299. If a test
 omits `response.status` it is treated as `200` for this check.
 

@@ -34,8 +34,8 @@ await Promise.all([
   }),
   build({
     ...common,
-    entryPoints: ['src/fest-helpers.ts'],
-    outfile: 'dist/fest-helpers.js',
+    entryPoints: ['src/spectest-helpers.ts'],
+    outfile: 'dist/spectest-helpers.js',
   }),
   build({
     ...common,

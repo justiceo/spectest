@@ -20,6 +20,55 @@ To generate an OpenAPI schema from the available test suites run:
 npm run generate:openapi > openapi.json
 ```
 
+## Test case options
+
+| Option | Description | Default |
+| ------ | ----------- | ------- |
+| `name` | Human readable test name | required |
+| `endpoint` | Request path relative to the base URL | required |
+| `order` | Execution order for grouping tests | `0` |
+| `tags` | Tags used for filtering | none |
+| `skip` | Skip the test case | `false` |
+| `focus` | Run only focused tests when present | `false` |
+| `repeat` | Extra sequential runs of the test | `0` |
+| `bombard` | Additional runs at the same order | `0` |
+| `delay` | Milliseconds to wait before running | none |
+| `timeout` | Per-test timeout override | runtime `timeout` (30000ms) |
+| `request.method` | HTTP method | `GET` |
+| `request.headers` | Additional request headers | none |
+| `request.body` | Request payload | none |
+| `request.credentials` | `'include'` to send cookies | none |
+| `response.status` | Expected HTTP status | `200` |
+| `response.json` | Expected partial JSON body | none |
+| `response.jsonSchema` | Zod or JSON schema for response | none |
+| `response.headers` | Expected response headers | none |
+| `beforeSend` | Function to modify the request | none |
+| `postTest` | Function called after the response | none |
+
+## Runtime options
+
+| Option | Description | Default |
+| ------ | ----------- | ------- |
+| `configFile` | Path to an extra config file | none |
+| `envFile` | `.env` file to load before tests | `.env` |
+| `baseUrl` | Base URL of the API | `https://jsonplaceholder.typicode.com` |
+| `suitesDir` | Directory containing test suites | `./spec` |
+| `testMatch` | Regex for suite filenames | `\.(suite|suites)\.js$` |
+| `startCmd` | Command to start the test server | `npm run start` |
+| `runningServer` | Handling for an existing server (`reuse`, `fail`, or `kill`) | `reuse` |
+| `tags` | Only run tests with these tags | none |
+| `rps` | Requests per second rate limit | `5` |
+| `timeout` | Default request timeout in milliseconds | `30000` |
+| `snapshotFile` | Path to write a snapshot file | none |
+| `bail` | Stop after the first failure | `false` |
+| `randomize` | Shuffle tests with the same order | `false` |
+| `happy` | Run only tests expecting 2xx status | `false` |
+| `verbose` | Verbose output with logs | `false` |
+| `userAgent` | Browser User-Agent string to send | `chrome_windows` |
+| `suiteFile` | Run only the specified suite file | none |
+| `projectRoot` | Root directory of the project | current working directory |
+
+
 The source code lives in `src/` and is bundled with [esbuild](https://esbuild.github.io/) into the `dist/` directory. The helpers can be imported separately via `spectest/helpers` without pulling in the CLI itself.
 
 ### Controlling request rate

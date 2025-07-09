@@ -4,7 +4,7 @@ export default {
   baseUrl: 'https://jsonplaceholder.typicode.com',
   suitesDir: './spec',
   testMatch: '\\.(suite|suites)\\.js$',
-  rps: 5,
+  rps: Infinity,
   timeout: 30000,
   randomize: false,
   bail: false,

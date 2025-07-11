@@ -90,8 +90,10 @@ function parseArgs(argv: string[]): CliConfig {
 export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   const cliOpts = parseArgs(argv);
   const projectRoot = process.cwd();
+  // first load default config.
   let cfg: CliConfig = { ...defaultConfig } as CliConfig;
 
+  // then load project config.
   try {
     const projectCfgPath = path.join(projectRoot, 'spectest.config.js');
     if (existsSync(projectCfgPath)) {
@@ -99,14 +101,15 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
       cfg = { ...cfg, ...(mod.default || mod) };
     }
   } catch {
-    // ignore project config load errors
   }
 
+  // then load invocation-time project config.
   if (cliOpts.configFile) {
     const mod = await import(path.resolve(cliOpts.configFile));
     cfg = { ...cfg, ...(mod.default || mod) };
   }
 
+  // then apply cli options over the configs.
   cfg = { ...cfg, ...cliOpts };
   cfg.projectRoot = projectRoot;
   cfg.runningServer = (cfg.runningServer as any) || 'reuse';

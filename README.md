@@ -23,11 +23,11 @@ With spectest, you declare requests the way you would pass them to the [fetch AP
 const suite = [
   {
     name: "Fetch TODO 1",
-    endpoint: "https://jsonplaceholder.typicode.com/todos/1",
+    endpoint: "/todos/1",
   },
   {
     name: "Create a post",
-    endpoint: "https://jsonplaceholder.typicode.com/posts",
+    endpoint: "/posts",
     request: {
       method: "POST",
       headers: { "Content-Type": "application/json; charset=UTF-8" },
@@ -46,7 +46,7 @@ export default suite;
 #### 2. Run the test
 
 ```bash
-$ npx spectest jsonpayload.suite.js
+$ npx spectest --base-url=https://jsonplaceholder.typicode.com jsonpayload.suite.js
 
 --------- ouput --------
 

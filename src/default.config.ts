@@ -1,7 +1,7 @@
 export default {
   envFile: '.env',
   startCmd: 'npm run start',
-  baseUrl: 'https://jsonplaceholder.typicode.com',
+  baseUrl: 'https://localhost:8080',
   suitesDir: './spec',
   testMatch: '\\.(suite|suites)\\.js$',
   rps: Infinity,

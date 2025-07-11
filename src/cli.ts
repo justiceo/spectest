@@ -8,10 +8,10 @@ import axios from 'axios';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 
-import { loadConfig } from './config.ts';
-import Server from './server.ts';
-import RateLimiter from './rate-limiter.ts';
-import { resolveUserAgent } from './user-agents.ts';
+import { loadConfig } from './config';
+import Server from './server';
+import RateLimiter from './rate-limiter';
+import { resolveUserAgent } from './user-agents';
 
 
 let API_BASE_URL;

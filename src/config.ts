@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import path from 'path';
 import { existsSync } from 'fs';
 import dotenv from 'dotenv';
-import defaultConfig from './default.config.ts';
+import defaultConfig from './default.config';
 
 export interface CliConfig {
   configFile?: string;

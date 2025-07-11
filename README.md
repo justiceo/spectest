@@ -1,24 +1,107 @@
-# Spectest
-[![Build](https://github.com/justiceo/spectest/actions/workflows/build.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/build.yml)
-[![Test](https://github.com/justiceo/spectest/actions/workflows/test.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/test.yml)
-## A fetch-inpsired declarative API testing frameowork
+<div align="center">
+  <img alt="spectest logo" src="https://raw.githubusercontent.com/justiceo/spectest/main/spectest-logo.png" width="600px" />
 
-This is a framework for running end-to-end API tests in a declarative way.
+  <h3 style="font-family: monospace; font-weight: 200">api testing + truly declarative x lightning fast & absurdly simple </h3>
 
-## Development
+[![Build](https://github.com/justiceo/spectest/actions/workflows/build.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/build.yml) 
+[![Test](https://github.com/justiceo/spectest/actions/workflows/test.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/test.yml) 
+[![NPM](http://img.shields.io/npm/v/spectest.svg)](https://www.npmjs.com/package/spectest) 
+[![License](https://img.shields.io/npm/l/spectest.svg)](https://github.com/justiceo/spectest/blob/main/LICENSE)
 
-Install dependencies and run the CLI tests:
+</div>
 
-```bash
-npm install
-npm test
+## Get started
+
+A spectest is a collection of request and response pairs. <br>
+With spectest, you declare requests the way you would pass them to the [fetch API](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API). Spectest mirrors the [request](https://developer.mozilla.org/en-US/docs/Web/API/Request) and [response](https://developer.mozilla.org/en-US/docs/Web/API/Response) schemas of normal browser/nodejs fetch requests.
+
+#### 1. Define your request and response
+
+```js
+// file:jsonpayload.suite.js
+
+const suite = [
+  {
+    name: "Fetch TODO 1",
+    endpoint: "https://jsonplaceholder.typicode.com/todos/1",
+  },
+  {
+    name: "Create a post",
+    endpoint: "https://jsonplaceholder.typicode.com/posts",
+    request: {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=UTF-8" },
+      body: { title: "foo", body: "bar", userId: 1 },
+    },
+    response: {
+      status: 201,
+      json: { id: 101, title: "foo", body: "bar", userId: 1 },
+    },
+  },
+];
+export default suite;
+
 ```
 
-To generate an OpenAPI schema from the available test suites run:
+#### 2. Run the test
 
 ```bash
-npm run generate:openapi > openapi.json
+$ npx spectest jsonpayload.suite.js
+
+--------- ouput --------
+
+📊 Test Summary:
+ [✅] Fetch TODO 1 (53ms)
+ [✅] Create a post (108ms)
+
+🎉 2/2 tests passed!
+📋 Server logs captured: 0
+⏱️ Latency: min 53ms; avg 80ms; max 108ms
+⏲️ Testing time: 0.11s
+⏲️ Elapsed time: 0.18s
 ```
+
+## Why Spectest
+While building an API, I kept running into the same frustrating loop: after writing comprehensive Jest tests, I still had to manually “verify” the API by running it through a frontend client.
+
+Here’s why Jest alone wasn’t enough:
+
+1. **Mocks obscure reality** – Jest enables mocking which simulate behavior but can hide real issues in production.
+
+2. **Multi-step flows were painful** – Chaining flows like `login → verify → fetch` was hard to write and even harder to maintain.
+
+3. **No browser-like behavior** – Jest couldn’t replicate real-world HTTP behavior like cookie persistence or automatic attachment.
+
+4. **API-centric needs were missing** – Load testing, proxying, and concurrency checks weren’t feasible out of the box.
+
+What I really needed was a way to **verify my API** contract the same way a frontend does—but **without** reaching for heavyweight tools like Selenium or Playwright.
+
+That’s where Spectest was born—out of necessity.
+
+
+## Spectest config
+
+To define common behavior for how and when requests, create a `spectest.config.js` file at the project root.
+Below is the default config:
+
+```js
+export default {
+  envFile: '.env',
+  startCmd: 'npm run start',
+  baseUrl: 'https://localhost:8080',
+  suitesDir: './spec',
+  testMatch: '\\.(suite|suites)\\.js$',
+  rps: Infinity,
+  timeout: 30000,
+  randomize: false,
+  bail: false,
+  happy: false,
+  runningServer: 'reuse',
+  userAgent: 'chrome_windows',
+};
+```
+
+
 
 ## Test case options
 
@@ -68,8 +151,6 @@ npm run generate:openapi > openapi.json
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` | Root directory of the project | current working directory |
 
-
-The source code lives in `src/` and is bundled with [esbuild](https://esbuild.github.io/) into the `dist/` directory. The helpers can be imported separately via `spectest/helpers` without pulling in the CLI itself.
 
 ### Controlling request rate
 

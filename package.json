@@ -1,6 +1,6 @@
 {
   "name": "spectest",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fetch-inspired declarative API testing framework",
   "main": "dist/cli.js",
   "scripts": {
@@ -15,6 +15,13 @@
     "http-testing",
     "api-testing"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/justiceo/spectest.git"
+  },
+  "bugs": {
+    "url": "https://github.com/justiceo/spectest/issues"
+  },
   "author": "Justice Ogbonna",
   "license": "ISC",
   "type": "module",

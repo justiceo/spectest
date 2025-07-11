@@ -140,15 +140,15 @@ export default {
 | `testMatch` | Regex for suite filenames | `\.spectest\.js$` |
 | `startCmd` | Command to start the test server | `npm run start` |
 | `runningServer` | Handling for an existing server (`reuse`, `fail`, or `kill`) | `reuse` |
-| `tags` | Only run tests with these tags | none |
+| `tags` | String list used for filtering tests | [] |
 | `rps` | Requests per second rate limit | Infinity |
 | `timeout` | Default request timeout in milliseconds | `30000` |
 | `snapshotFile` | Path to write a snapshot file | none |
 | `bail` | Stop after the first failure | `false` |
-| `randomize` | Shuffle tests with the same order | `false` |
-| `happy` | Run only tests expecting 2xx status | `false` |
+| `randomize` | Shuffle tests ordering before execution | `false` |
+| `happy` | Run only tests expecting 2xx status. Quick filter for testing the happy path. | `false` |
 | `verbose` | Verbose output with logs | `false` |
-| `userAgent` | Browser User-Agent string to send | `chrome_windows` |
+| `userAgent` | Browser User-Agent string to send or one of the predefined [user-agents](https://github.com/justiceo/spectest/blob/main/src/user-agents.ts). | `chrome_windows` |
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` | Root directory of the project | current working directory |
 

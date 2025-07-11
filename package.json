@@ -4,7 +4,7 @@
   "description": "Fetch-inspired declarative API testing framework",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "node build.mjs",
+    "build": "node build.js",
     "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com",
     "generate:openapi": "npm run build && node dist/generate-openapi.js"
   },
@@ -37,7 +37,7 @@
   },
   "exports": {
     ".": "./dist/cli.js",
-    "./helpers": "./dist/spectest-helpers.js"
+    "./helpers": "./dist/helpers.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.12",

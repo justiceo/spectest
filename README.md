@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="spectest logo" src="https://raw.githubusercontent.com/justiceo/spectest/main/spectest-logo.png" width="600px" />
+  <img alt="spectest logo" src="https://github.com/justiceo/spectest/blob/3a53b5ed4673c2f54ba2452da7fb1da392c57a25/spectest-logo.png?raw=true" width="600px" />
 
   <h3 style="font-family: monospace; font-weight: 200">api testing + truly declarative x lightning fast & absurdly simple </h3>
 

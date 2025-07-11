@@ -1,7 +1,7 @@
 <div align="center">
-  <img alt="spectest logo" src="https://github.com/justiceo/spectest/blob/3a53b5ed4673c2f54ba2452da7fb1da392c57a25/spectest-logo.png?raw=true" width="600px" />
+  <img alt="spectest logo" src="https://github.com/justiceo/spectest/blob/3a53b5ed4673c2f54ba2452da7fb1da392c57a25/spectest-logo.png?raw=true" width="800px" />
 
-  <h3 style="font-family: monospace; font-weight: 200">api testing + truly declarative x lightning fast & absurdly simple </h3>
+  <h3 style="font-family: monospace; font-weight: 200; margin-bottom:30px">api testing + truly declarative x lightning fast & absurdly simple </h3>
 
 [![Build](https://github.com/justiceo/spectest/actions/workflows/build.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/build.yml) 
 [![Test](https://github.com/justiceo/spectest/actions/workflows/test.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/test.yml) 
@@ -88,9 +88,9 @@ Below is the default config:
 export default {
   envFile: '.env',
   startCmd: 'npm run start',
-  baseUrl: 'https://localhost:8080',
-  suitesDir: './spec',
-  testMatch: '\\.(suite|suites)\\.js$',
+  baseUrl: 'https://localhost:3000',
+  suitesDir: './test',
+  testMatch: '\\.spectest\\.js$',
   rps: Infinity,
   timeout: 30000,
   randomize: false,
@@ -120,13 +120,14 @@ export default {
 | `request.method` | HTTP method | `GET` |
 | `request.headers` | Additional request headers | none |
 | `request.body` | Request payload | none |
-| `request.credentials` | `'include'` to send cookies | none |
+| `request.*` | Other valid fetch [Request](https://developer.mozilla.org/en-US/docs/Web/API/Request) option keys, e.g. `cache`, `mode`. | none |
 | `response.status` | Expected HTTP status | `200` |
 | `response.json` | Expected partial JSON body | none |
 | `response.jsonSchema` | Zod or JSON schema for response | none |
 | `response.headers` | Expected response headers | none |
-| `beforeSend` | Function to modify the request | none |
-| `postTest` | Function called after the response | none |
+| `response.*` | Other valid fetch [Response](https://developer.mozilla.org/en-US/docs/Web/API/Response) response keys e.g. `statusText`, `type`. | none |
+| `beforeSend` | Function used to finalize the request | none |
+| `postTest` | Function used to process response, usually to extract and save data. | none |
 
 ## Runtime options
 
@@ -134,13 +135,13 @@ export default {
 | ------ | ----------- | ------- |
 | `configFile` | Path to an extra config file | none |
 | `envFile` | `.env` file to load before tests | `.env` |
-| `baseUrl` | Base URL of the API | `https://jsonplaceholder.typicode.com` |
-| `suitesDir` | Directory containing test suites | `./spec` |
-| `testMatch` | Regex for suite filenames | `\.(suite|suites)\.js$` |
+| `baseUrl` | Base URL of the API | `http://localhost:3000` |
+| `suitesDir` | Directory containing test suites | `./test` |
+| `testMatch` | Regex for suite filenames | `\.spectest\.js$` |
 | `startCmd` | Command to start the test server | `npm run start` |
 | `runningServer` | Handling for an existing server (`reuse`, `fail`, or `kill`) | `reuse` |
 | `tags` | Only run tests with these tags | none |
-| `rps` | Requests per second rate limit | `5` |
+| `rps` | Requests per second rate limit | Infinity |
 | `timeout` | Default request timeout in milliseconds | `30000` |
 | `snapshotFile` | Path to write a snapshot file | none |
 | `bail` | Stop after the first failure | `false` |

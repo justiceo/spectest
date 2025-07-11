@@ -1,6 +1,6 @@
 {
   "name": "spectest",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "description": "Fetch-inspired declarative API testing framework",
   "main": "dist/cli.js",
   "scripts": {

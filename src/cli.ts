@@ -1,4 +1,4 @@
-import pc from 'picocolors';
+import Renderer from './renderer';
 import { readdir, writeFile, readFile } from 'fs/promises';
 import { existsSync, realpathSync, readFileSync } from 'fs';
 import path from 'path';
@@ -402,7 +402,7 @@ function shuffle(arr) {
   }
 }
 
-async function runTestsInOrder(tests, options = {}) {
+async function runTestsInOrder(tests, renderer, options = {}) {
   const { tags, randomize, bail, happy, filter, snapshotFile } = options;
   const expanded = expandRepeats(tests);
   const focusResult = filterTestsByFocus(expanded);
@@ -441,7 +441,7 @@ async function runTestsInOrder(tests, options = {}) {
     if (randomize) {
       shuffle(runnableTests);
     }
-    console.log(`📋 Running tests with order ${order} (${runnableTests.length} tests)...`);
+    renderer.runningOrder(order, runnableTests.length);
     const groupResults = await Promise.all(
       runnableTests.map(async (test) => {
         const result = await runTest(test);
@@ -458,9 +458,9 @@ async function runTestsInOrder(tests, options = {}) {
 }
 
 async function runAllTests(cfg, verbose = false, tags = []) {
+  const renderer = new Renderer({ verbose });
   const progStart = Date.now();
-  console.log(`🚀 Starting E2E Tests against ${cfg.baseUrl}`);
-  console.log('='.repeat(50));
+  renderer.start(cfg.baseUrl);
 
   const suites = await discoverSuites(cfg);
   const tests = suites.flatMap((suite) =>
@@ -478,7 +478,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 
   console.log('📋 Running tests...');
   const testStart = Date.now();
-  const { results: testResults, skippedTests } = await runTestsInOrder(tests, {
+  const { results: testResults, skippedTests } = await runTestsInOrder(tests, renderer, {
     tags,
     randomize: cfg.randomize,
     bail: cfg.bail,
@@ -489,29 +489,11 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   const totalTestTime = Date.now() - testStart;
   const passed = testResults.filter((r) => r.passed).length;
   const total = testResults.length;
-  const skipped = skippedTests.length;
-
   console.log('='.repeat(50));
   console.log(`✨ Tests completed: ${passed}/${total} passed`);
-  if (skipped > 0) {
-    console.log(`⏭️  Skipped ${skipped} tests:`);
-    const skippedBySuite = skippedTests.reduce((acc: any, t: any) => {
-      const s = t.suiteName || 'unknown';
-      if (!acc[s]) acc[s] = [];
-      acc[s].push(t);
-      return acc;
-    }, {} as Record<string, any[]>);
-    Object.entries(skippedBySuite).forEach(([suite, cases]) => {
-      console.log(`  Suite: ${suite}`);
-      cases.forEach((c) => {
-        console.log(`    - ${c.name}`);
-      });
-    });
-  }
+  renderer.showSkippedTests(skippedTests);
 
-  console.log('\n📊 Test Summary:');
   const serverLogs = server.getLogs();
-
   const resultsBySuite = testResults.reduce((acc: any, r: any) => {
     const s = r.suiteName || 'unknown';
     if (!acc[s]) acc[s] = [];
@@ -519,65 +501,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     return acc;
   }, {} as Record<string, any[]>);
 
-  Object.entries(resultsBySuite).forEach(([suite, results]) => {
-    console.log(`\n🗂️  Suite: ${suite}`);
-    (results as any[]).forEach((result) => {
-      const icon = result.timedOut ? '⏰' : result.passed ? '✅' : '❌';
-      console.log(`[${icon}] ${result.testName} (${result.latency}ms)`);
-
-      if (verbose || !result.passed) {
-        const requestLogs = serverLogs.filter((log) => log.message.includes(result.requestId));
-        if (requestLogs.length > 0) {
-          requestLogs.forEach((entry) => {
-            const message =
-              entry.type === 'stderr'
-                ? pc.red(`  ${entry.timestamp}: ${entry.message}`)
-                : `  ${entry.timestamp}: ${entry.message}`;
-            console.log(message);
-          });
-        } else {
-          console.log(`  No server logs found for request ID: ${result.requestId}`);
-        }
-
-        if (result.error) {
-          console.log(pc.red(`  Test failure reason: ${result.error}`));
-        }
-
-        console.log('');
-      }
-    });
-  });
-
-  console.log(`📋 Total server logs captured: ${serverLogs.length}`);
-
-  if (testResults.length > 0) {
-    const latencies = testResults.map((r) => r.latency).sort((a, b) => a - b);
-    const min = latencies[0];
-    const max = latencies[latencies.length - 1];
-    const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-    const mid = Math.floor(latencies.length / 2);
-    const median = latencies.length % 2 === 0 ? (latencies[mid - 1] + latencies[mid]) / 2 : latencies[mid];
-
-    
-    if (verbose) {
-      console.log('\n⏱️  Latency Summary:');
-      console.table([
-        { Metric: 'Min (ms)', Value: min },
-        { Metric: 'Median (ms)', Value: median },
-        { Metric: 'Average (ms)', Value: Number(avg.toFixed(2)) },
-        { Metric: 'Max (ms)', Value: max },
-      ]);
-
-      const slowCount = 5; // TODO: Move to config
-      const slowTests = [...testResults].sort((a, b) => b.latency - a.latency).slice(0, slowCount);
-      if (slowTests.length > 0) {
-        console.log(`\n🐢 Slowest ${slowTests.length} Tests:`);
-        console.table(slowTests.map((t) => ({ Test: t.testName, 'Latency (ms)': t.latency })));
-      }
-    } else {
-      console.log(`\n⏱️  Latency: min ${min}ms; avg ${Number(avg.toFixed(2))}ms; max ${max}ms`);
-    }
-  }
+  renderer.showResults(resultsBySuite, serverLogs);
+  renderer.showLatency(testResults);
   
   if (cfg.snapshotFile) {
     const snapshotCases = testResults.map((r) => ({
@@ -624,7 +549,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 
     try {
       await writeFile(snapshotPath, JSON.stringify(merged, null, 2));
-      console.log(`\uD83D\uDCF8 Snapshot saved to ${cfg.snapshotFile}`);
+      renderer.snapshotSaved(cfg.snapshotFile);
     } catch (err) {
       console.error('Failed to write snapshot:', err.message);
     }
@@ -636,15 +561,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   const totalTime = Date.now() - progStart;
-  console.log(`⏱️  Testing time: ${(totalTestTime / 1000).toFixed(2)}s; Total time: ${(totalTime / 1000).toFixed(2)}s`);
-
-  if (passed === total) {
-    console.log(`✅  ${passed}/${total} tests passed!`);
-    process.exit(0);
-  } else {
-    console.log(`⚠️  ${passed}/${total} tests passed`);
-    process.exit(1);
-  }
+  renderer.finalStats(passed, total, totalTestTime, totalTime);
+  process.exit(passed === total ? 0 : 1);
 }
 
 if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1]))  {

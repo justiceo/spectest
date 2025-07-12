@@ -1,7 +1,7 @@
 {
   "name": "spectest",
-  "version": "1.0.1",
-  "description": "Fetch-inspired declarative API testing framework",
+  "version": "1.0.2",
+  "description": "Declarative API testing that is fast and simple",
   "main": "dist/cli.js",
   "scripts": {
     "build": "npx -y esbuild src/cli.ts src/helpers.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist",

@@ -159,6 +159,7 @@ That’s where Spectest was born—out of necessity.
 | `bail` | Stop after the first failure | `false` |
 | `randomize` | Shuffle tests ordering before execution | `false` |
 | `happy` | Run only tests expecting 2xx status. Quick filter for testing the happy path. | `false` |
+| `filter` | Regex or smart filter to select tests (`happy`, `failures`) | none |
 | `verbose` | Verbose output with logs | `false` |
 | `userAgent` | Browser User-Agent string to send or one of the predefined [user-agents](https://github.com/justiceo/spectest/blob/main/src/user-agents.ts). | `chrome_windows` |
 | `suiteFile` | Run only the specified suite file | none |
@@ -253,11 +254,12 @@ You can run only todo tests with `npx spectest --tags=todo`, and can combine mul
 
 #### Use smart filters
 
-`--filter_happy`:  Filters the test cases to those with `OK` status, it's a good way to quickly ensure the happy path works.
+Use `--filter=<pattern>` to run tests whose names match `<pattern>`. Several smart
+filters are provided:
 
-`--filter_failures`: Reruns only the failing test cases from the previous run.
+`--filter=happy` filters to only the tests expecting a 2xx status, a quick way to verify the happy path.
 
-`--filter_fast=N`: Runs only the `N` fastest test cases from the previous run. 
+`--filter=failures` reruns only the tests that failed in the snapshot from the previous run.
 
 ### Test timeout
 

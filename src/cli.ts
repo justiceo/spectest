@@ -1,6 +1,6 @@
 import pc from 'picocolors';
 import { readdir, writeFile, readFile } from 'fs/promises';
-import { existsSync, realpathSync } from 'fs';
+import { existsSync, realpathSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -378,6 +378,42 @@ function filterTestsByHappy(tests, happy) {
   return { filtered, skipped };
 }
 
+function filterTestsByName(tests, pattern) {
+  if (!pattern) {
+    return { filtered: [...tests], skipped: [] };
+  }
+  const regex = new RegExp(pattern, 'i');
+  const filtered = [];
+  const skipped = [];
+  tests.forEach((test) => {
+    if (regex.test(test.name)) filtered.push(test);
+    else skipped.push(test);
+  });
+  return { filtered, skipped };
+}
+
+function filterTestsByFailures(tests, snapshotPath) {
+  if (!snapshotPath || !existsSync(snapshotPath)) {
+    return { filtered: [...tests], skipped: [] };
+  }
+  try {
+    const raw = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+    const cases = Array.isArray(raw) ? raw : raw.cases || [];
+    const failing = new Set(
+      cases.filter((c) => c.status && c.status !== 'pass').map((c) => c.name)
+    );
+    const filtered = [];
+    const skipped = [];
+    tests.forEach((test) => {
+      if (failing.has(test.name)) filtered.push(test);
+      else skipped.push(test);
+    });
+    return { filtered, skipped };
+  } catch {
+    return { filtered: [...tests], skipped: [] };
+  }
+}
+
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -386,13 +422,30 @@ function shuffle(arr) {
 }
 
 async function runTestsInOrder(tests, options = {}) {
-  const { tags, randomize, bail, happy } = options;
+  const { tags, randomize, bail, happy, filter, snapshotFile } = options;
   const expanded = expandRepeats(tests);
   const focusResult = filterTestsByFocus(expanded);
   const tagResult = filterTestsByTags(focusResult.filtered, tags);
-  const happyResult = filterTestsByHappy(tagResult.filtered, happy);
+  let nameResult = { filtered: [...tagResult.filtered], skipped: [] };
+  let happyFlag = happy;
+  if (filter) {
+    const lower = String(filter).toLowerCase();
+    if (lower === 'happy') {
+      happyFlag = true;
+    } else if (lower === 'failures') {
+      nameResult = filterTestsByFailures(tagResult.filtered, snapshotFile);
+    } else {
+      nameResult = filterTestsByName(tagResult.filtered, filter);
+    }
+  }
+  const happyResult = filterTestsByHappy(nameResult.filtered, happyFlag);
   const testGroups = groupTestsByOrder(happyResult.filtered);
-  const skippedTests = [...focusResult.skipped, ...tagResult.skipped, ...happyResult.skipped];
+  const skippedTests = [
+    ...focusResult.skipped,
+    ...tagResult.skipped,
+    ...nameResult.skipped,
+    ...happyResult.skipped,
+  ];
   const initial = Promise.resolve({ results: [], bail: false });
   const final = await Array.from(testGroups).reduce(async (accPromise, [order, testsInGroup]) => {
     const accumulator = await accPromise;
@@ -446,6 +499,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     randomize: cfg.randomize,
     bail: cfg.bail,
     happy: cfg.happy,
+    filter: cfg.filter,
+    snapshotFile: cfg.snapshotFile
   });
   const totalTestTime = Date.now() - testStart;
   const passed = testResults.filter((r) => r.passed).length;

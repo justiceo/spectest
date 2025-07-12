@@ -9,6 +9,7 @@ export default {
   randomize: false,
   bail: false,
   happy: false,
+  filter: '',
   runningServer: 'reuse',
   userAgent: 'chrome_windows',
 };

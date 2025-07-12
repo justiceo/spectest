@@ -42,23 +42,35 @@ function setupEnvironment(cfg) {
 }
 
 async function discoverSuites(cfg) {
-  if (cfg.suiteFile) {
-    const suitePath = path.resolve(cfg.projectRoot || process.cwd(), cfg.suiteFile);
-    const mod = await import(suitePath);
-    return Array.isArray(mod.default) ? [...mod.default] : [];
+  const projectRoot = cfg.projectRoot || process.cwd();
+
+  async function loadSuite(filePath: string) {
+    const mod = await import(filePath);
+    const tests = Array.isArray(mod.default) ? [...mod.default] : [];
+    const base = path.basename(filePath);
+    const parsed = path.parse(base);
+    const name = parsed.name.replace(/\.spectest$/, '');
+    return { name, tests };
   }
 
-  const testDir = path.resolve(cfg.projectRoot || process.cwd(), cfg.testDir);
+  if (cfg.suiteFile) {
+    const suitePath = path.resolve(projectRoot, cfg.suiteFile);
+    const suite = await loadSuite(suitePath);
+    return [suite];
+  }
+
+  const testDir = path.resolve(projectRoot, cfg.testDir);
   const files = await readdir(testDir);
   const pattern = new RegExp(cfg.filePattern);
   const suiteFiles = files.filter((f) => pattern.test(f)).sort();
-  const modules = await Promise.all(suiteFiles.map((file) => import(path.join(testDir, file))));
-  return modules.reduce((all, mod) => {
-    if (Array.isArray(mod.default)) {
-      all.push(...mod.default);
-    }
-    return all;
-  }, []);
+  const suites = [] as Array<{ name: string; tests: any[] }>;
+  for (const file of suiteFiles) {
+    const suitePath = path.join(testDir, file);
+    // eslint-disable-next-line no-await-in-loop
+    const suite = await loadSuite(suitePath);
+    suites.push(suite);
+  }
+  return suites;
 }
 
 const testState = {
@@ -255,6 +267,7 @@ async function runTest(test) {
       latency,
       requestId,
       testName: test.name,
+      suiteName: test.suiteName,
       request: config,
       response: {
         status: response.status,
@@ -271,6 +284,7 @@ async function runTest(test) {
       latency,
       requestId,
       testName: test.name,
+      suiteName: test.suiteName,
       timedOut: isTimeout,
       request: error.config || undefined,
       response: error.response
@@ -481,7 +495,10 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   console.log(`🚀 Starting E2E Tests against ${API_BASE_URL}`);
   console.log('='.repeat(50));
 
-  const tests = await discoverSuites(cfg);
+  const suites = await discoverSuites(cfg);
+  const tests = suites.flatMap((suite) =>
+    suite.tests.map((t) => ({ ...t, suiteName: suite.name }))
+  );
 
   // TODO: Do not proceed if tests array is empty.
 
@@ -511,38 +528,57 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   console.log(`✨ Tests completed: ${passed}/${total} passed`);
   if (skipped > 0) {
     console.log(`⏭️  Skipped ${skipped} tests:`);
-    skippedTests.forEach((t) => {
-      console.log(`  - ${t.name}`);
+    const skippedBySuite = skippedTests.reduce((acc: any, t: any) => {
+      const s = t.suiteName || 'unknown';
+      if (!acc[s]) acc[s] = [];
+      acc[s].push(t);
+      return acc;
+    }, {} as Record<string, any[]>);
+    Object.entries(skippedBySuite).forEach(([suite, cases]) => {
+      console.log(`  Suite: ${suite}`);
+      cases.forEach((c) => {
+        console.log(`    - ${c.name}`);
+      });
     });
   }
 
   console.log('\n📊 Test Summary:');
   const serverLogs = server.getLogs();
 
-  testResults.forEach((result) => {
-    const icon = result.timedOut ? '⏰' : result.passed ? '✅' : '❌';
-    console.log(`[${icon}] ${result.testName} (${result.latency}ms)`);
+  const resultsBySuite = testResults.reduce((acc: any, r: any) => {
+    const s = r.suiteName || 'unknown';
+    if (!acc[s]) acc[s] = [];
+    acc[s].push(r);
+    return acc;
+  }, {} as Record<string, any[]>);
 
-    if (verbose || !result.passed) {
-      const requestLogs = serverLogs.filter((log) => log.message.includes(result.requestId));
-      if (requestLogs.length > 0) {
-        requestLogs.forEach((entry) => {
-          const message =
-            entry.type === 'stderr'
-              ? pc.red(`  ${entry.timestamp}: ${entry.message}`)
-              : `  ${entry.timestamp}: ${entry.message}`;
-          console.log(message);
-        });
-      } else {
-        console.log(`  No server logs found for request ID: ${result.requestId}`);
+  Object.entries(resultsBySuite).forEach(([suite, results]) => {
+    console.log(`\n🗂️  Suite: ${suite}`);
+    (results as any[]).forEach((result) => {
+      const icon = result.timedOut ? '⏰' : result.passed ? '✅' : '❌';
+      console.log(`[${icon}] ${result.testName} (${result.latency}ms)`);
+
+      if (verbose || !result.passed) {
+        const requestLogs = serverLogs.filter((log) => log.message.includes(result.requestId));
+        if (requestLogs.length > 0) {
+          requestLogs.forEach((entry) => {
+            const message =
+              entry.type === 'stderr'
+                ? pc.red(`  ${entry.timestamp}: ${entry.message}`)
+                : `  ${entry.timestamp}: ${entry.message}`;
+            console.log(message);
+          });
+        } else {
+          console.log(`  No server logs found for request ID: ${result.requestId}`);
+        }
+
+        if (result.error) {
+          console.log(pc.red(`  Test failure reason: ${result.error}`));
+        }
+
+        console.log('');
       }
-
-      if (result.error) {
-        console.log(pc.red(`  Test failure reason: ${result.error}`));
-      }
-
-      console.log('');
-    }
+    });
   });
 
   console.log(`📋 Total server logs captured: ${serverLogs.length}`);
@@ -574,6 +610,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   if (cfg.snapshotFile) {
     const snapshotCases = testResults.map((r) => ({
       name: r.testName,
+      suite: r.suiteName,
       request: r.request,
       response: r.response,
       status: r.timedOut ? 'timeout' : r.passed ? 'pass' : 'fail',

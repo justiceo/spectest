@@ -46,10 +46,27 @@ async function discoverSuites(cfg) {
 
   async function loadSuite(filePath: string) {
     const mod = await import(filePath);
-    const tests = Array.isArray(mod.default) ? [...mod.default] : [];
-    const base = path.basename(filePath);
-    const parsed = path.parse(base);
-    const name = parsed.name.replace(/\.spectest$/, '');
+    const exported = mod.default || mod;
+    let tests: any[] = [];
+    let name: string | undefined;
+
+    if (Array.isArray(exported)) {
+      tests = [...exported];
+    } else if (exported && typeof exported === 'object') {
+      if (Array.isArray((exported as any).tests)) {
+        tests = [...(exported as any).tests];
+      }
+      if (typeof (exported as any).name === 'string') {
+        name = (exported as any).name;
+      }
+    }
+
+    if (!name) {
+      const base = path.basename(filePath);
+      const parsed = path.parse(base);
+      name = parsed.name.replace(/\.spectest$/, '');
+    }
+
     return { name, tests };
   }
 

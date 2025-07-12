@@ -1,4 +1,4 @@
-const suite = [
+const tests = [
   {
     name: "Fetch album 1",
     endpoint: "/albums/1",
@@ -8,5 +8,6 @@ const suite = [
     endpoint: "/photos/1",
   }
 ];
-export default suite;
+
+export default { name: "example", tests };
 

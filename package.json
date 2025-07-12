@@ -26,8 +26,7 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
-    "axios": "^1.10.0",
-    "commander": "^11.1.0"
+    "axios": "^1.10.0"
   },
   "bin": {
     "spectest": "dist/cli.js"

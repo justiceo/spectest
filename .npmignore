@@ -1,0 +1,13 @@
+# Exclude development sources and assets
+.github
+src
+src/**
+**/*.ts
+spec
+spec/**
+test
+build.js
+tsconfig.json
+spectest-logo.png
+spectest-logo-transparent.png
+package-lock.json

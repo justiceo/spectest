@@ -88,11 +88,10 @@ All three commands above will have the same output, and it would look like:
  [✅] Fetch TODO 1 (53ms)
  [✅] Create a post (108ms)
 
-🎉 2/2 tests passed!
+✅ 2/2 tests passed!
 📋 Server logs captured: 0
 ⏱️ Latency: min 53ms; avg 80ms; max 108ms
-⏲️ Testing time: 0.11s
-⏲️ Elapsed time: 0.18s
+⏱️ Testing time: 0.11s; Total time: 0.18s
 ```
 
 ## Why Spectest

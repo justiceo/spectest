@@ -4,9 +4,8 @@
   "description": "Fetch-inspired declarative API testing framework",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "npx esbuild src/cli.ts src/helpers.ts src/generate-openapi.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist",
-    "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com",
-    "generate:openapi": "npm run build && node dist/generate-openapi.js"
+    "build": "npx -y esbuild src/cli.ts src/helpers.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist",
+    "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com"
   },
   "keywords": [
     "api",

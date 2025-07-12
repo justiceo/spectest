@@ -8,8 +8,8 @@ export interface CliConfig {
   configFile?: string;
   envFile?: string;
   baseUrl?: string;
-  suitesDir?: string;
-  testMatch?: string;
+  testDir?: string;
+  filePattern?: string;
   startCmd?: string;
   runningServer?: string;
   tags?: string[];
@@ -34,8 +34,8 @@ function createProgram() {
     .option('-c, --config <path>', 'path to additional config file')
     .option('-e, --env <file>', 'path to .env file')
     .option('-u, --base-url <url>', 'base URL of the API')
-    .option('-d, --suites-dir <dir>', 'directory containing test suites')
-    .option('-m, --test-match <pattern>', 'regex pattern for suite files')
+    .option('-d, --test-dir <dir>', 'directory containing test suites')
+    .option('-m, --file-pattern <pattern>', 'regex pattern for suite files')
     .option('-s, --start-cmd <cmd>', 'command to start the test server')
     .option('-R, --running-server <mode>', 'existing server handling (reuse|fail|kill)')
     .option('-t, --tags <list>', 'comma separated list of tags to run')
@@ -61,8 +61,8 @@ function parseArgs(argv: string[]): CliConfig {
     configFile: opts.config,
     envFile: opts.env,
     baseUrl: opts.baseUrl,
-    suitesDir: opts.suitesDir,
-    testMatch: opts.testMatch,
+    testDir: opts.testDir,
+    filePattern: opts.filePattern,
     startCmd: opts.startCmd,
     runningServer: opts.runningServer,
     tags: typeof opts.tags === 'string'

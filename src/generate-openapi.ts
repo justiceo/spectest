@@ -19,10 +19,10 @@ interface TestCase {
   };
 }
 
-async function loadSuites(suitesDir = './spec', testMatch = /\.(suite|suites)\.js$/) {
-  const absDir = path.resolve(suitesDir);
+async function loadSuites(testDir = './spec', filePattern = /\.(suite|suites)\.js$/) {
+  const absDir = path.resolve(testDir);
   const files = await readdir(absDir);
-  const suiteFiles = files.filter((f) => testMatch.test(f));
+  const suiteFiles = files.filter((f) => filePattern.test(f));
   const modules = await Promise.all(suiteFiles.map((f) => import(path.join(absDir, f))));
   return modules.reduce<TestCase[]>((acc, mod) => {
     if (Array.isArray(mod.default)) acc.push(...mod.default);

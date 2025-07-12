@@ -48,11 +48,11 @@ async function discoverSuites(cfg) {
     return Array.isArray(mod.default) ? [...mod.default] : [];
   }
 
-  const suitesDir = path.resolve(cfg.projectRoot || process.cwd(), cfg.suitesDir);
-  const files = await readdir(suitesDir);
-  const pattern = new RegExp(cfg.testMatch);
+  const testDir = path.resolve(cfg.projectRoot || process.cwd(), cfg.testDir);
+  const files = await readdir(testDir);
+  const pattern = new RegExp(cfg.filePattern);
   const suiteFiles = files.filter((f) => pattern.test(f)).sort();
-  const modules = await Promise.all(suiteFiles.map((file) => import(path.join(suitesDir, file))));
+  const modules = await Promise.all(suiteFiles.map((file) => import(path.join(testDir, file))));
   return modules.reduce((all, mod) => {
     if (Array.isArray(mod.default)) {
       all.push(...mod.default);

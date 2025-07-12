@@ -19,6 +19,7 @@ export interface CliConfig {
   bail?: boolean;
   randomize?: boolean;
   happy?: boolean;
+  filter?: string;
   verbose?: boolean;
   userAgent?: string;
   suiteFile?: string;
@@ -45,6 +46,7 @@ function createProgram() {
     .option('-b, --bail', 'stop on first failure')
     .option('-z, --randomize', 'randomize tests with the same order')
     .option('--happy', 'run only tests expecting 2xx status')
+    .option('-f, --filter <pattern>', 'filter tests by name or smart filter')
     .option('-v, --verbose', 'verbose output')
     .option('--user-agent <ua>', 'user agent to use for requests')
     .option('--ua <ua>', 'alias for --user-agent')
@@ -74,6 +76,7 @@ function parseArgs(argv: string[]): CliConfig {
     bail: opts.bail,
     randomize: opts.randomize,
     happy: opts.happy,
+    filter: opts.filter,
     verbose: opts.verbose,
     userAgent: opts.userAgent || opts.ua,
     suiteFile,

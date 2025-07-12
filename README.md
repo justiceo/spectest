@@ -41,7 +41,7 @@ Create the file `test/jsonpayload.spectest.js` and paste the code below in it. *
 ```js
 // jsonpayload.spectest.js
 
-const suite = [
+const tests = [
   // This basic example fetches {baseUrl}/todos/1 and asserts response status is 'OK'.
   {
     name: "Fetch TODO 1",
@@ -63,10 +63,11 @@ const suite = [
     },
   },
 ];
-export default suite;
+
+export default { name: 'jsonpayload', tests };
 ```
 
-A `*.spectest.js` file can have `classes`, `functions`, use `imports` and do anything you would with Javascript. It simply needs to export an array of test cases in the end, how it builds this array is up to it. For the full schema of a test case, see [Testcase reference](#test-case-options)
+A `*.spectest.js` file can have `classes`, `functions`, use `imports` and do anything you would with Javascript. The default export may be either an array of test cases or an object with a `tests` array and optional `name` property. For the full schema of a test case, see [Testcase reference](#test-case-options)
 
 ### 3. Run the test cases
 

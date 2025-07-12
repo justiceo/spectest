@@ -28,7 +28,7 @@ At the root of your project, create the file `spectest.config.js`. For the purpo
 export default {
   baseUrl: 'https://jsonplaceholder.typicode.com',
   testDir: './test',
-  filePattern: '\\.spectest\\.js$',
+  filePattern: '\\.spectest\\.',
 };
 ```
 
@@ -149,7 +149,7 @@ That’s where Spectest was born—out of necessity.
 | `configFile` | Path to an extra config file | none |
 | `baseUrl` | Base URL of the API | `http://localhost:3000` |
 | `testDir` | Directory containing test suites | `./test` |
-| `filePattern` | Regex for suite filenames | `\.spectest\.js$` |
+| `filePattern` | Regex for suite filenames | `\.spectest\.` |
 | `startCmd` | Command to start the test server | `npm run start` |
 | `runningServer` | Handling for an existing server (`reuse`, `fail`, or `kill`) | `reuse` |
 | `tags` | String list used for filtering tests | [] |

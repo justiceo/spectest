@@ -2,7 +2,7 @@ export default {
   startCmd: 'npm run start',
   baseUrl: 'https://localhost:8080',
   testDir: './test',
-  filePattern: '\\.spectest\\.js$',
+  filePattern: '\\.spectest\\.',
   rps: Infinity,
   timeout: 30000,
   randomize: false,

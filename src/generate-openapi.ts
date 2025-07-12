@@ -19,7 +19,7 @@ interface TestCase {
   };
 }
 
-async function loadSuites(testDir = './spec', filePattern = /\.(suite|suites)\.js$/) {
+async function loadSuites(testDir = './spec', filePattern = /\.(suite|suites)\./) {
   const absDir = path.resolve(testDir);
   const files = await readdir(absDir);
   const suiteFiles = files.filter((f) => filePattern.test(f));

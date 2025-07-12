@@ -280,4 +280,52 @@ file. Each case records the final request that was sent, the actual server respo
 
 You can easily update failed tests by copying the responses in the snapshot file into the test cases.
 
+### Working with large test suites
+
+The `spectest/helpers` module contain utility functions for batch modifying test cases. Most attributes that can be applied to a test case has a similarly named batch helper.
+
+The collection below
+```js
+const suite = [
+  {
+    name: "Get todo list",
+    endpoint: "/todos",
+    delay: 500,
+    focus: true,
+  },
+  {
+    name: "Fetch TODO 1",
+    endpoint: "/todos/1",
+    delay: 500,
+    focus: true,
+  },
+];
+export default suite;
+```
+
+Is the same as 
+```js
+import {focus, delay} from 'spectest/helpers';
+
+const suite = [
+  {
+    name: "Get todo list",
+    endpoint: "/todos",
+  },
+  {
+    name: "Fetch TODO 1",
+    endpoint: "/todos/1",
+  },
+];
+export default focus(delay(suite, 500));
+```
+
+And you can create your own helpers to reduce repetition of common request/response properties!
+
+### Test formats
+
+Test cases can be written in `.js`, plain `.json` files, or `.mjs` for ESM and `.cjs` for CommonJs modules.
+
+Typescript (`.ts`) files are not yet supported, you'd need to transpile them to any of the supported Js modules above.
+
 

@@ -42,21 +42,34 @@ async function discoverSuites(cfg) {
   const projectRoot = cfg.projectRoot || process.cwd();
 
   async function loadSuite(filePath: string) {
-    const mod = await import(filePath);
-    const exported = mod.default || mod;
     let tests: any[] = [];
     let name: string | undefined;
 
-    if (Array.isArray(exported)) {
-      tests = [...exported];
-    } else if (exported && typeof exported === 'object') {
-      if (Array.isArray((exported as any).tests)) {
-        tests = [...(exported as any).tests];
+    if (filePath.endsWith('.json')) {
+      const raw = await readFile(filePath, 'utf8');
+      const data = JSON.parse(raw);
+      if (Array.isArray(data)) {
+        tests = data;
+      } else if (data && Array.isArray(data.tests)) {
+        tests = data.tests;
+        if (typeof data.name === 'string') name = data.name;
       }
-      if (typeof (exported as any).name === 'string') {
-        name = (exported as any).name;
+    } else {
+      const mod = await import(filePath);
+      const exported = mod.default || mod;
+
+      if (Array.isArray(exported)) {
+        tests = [...exported];
+      } else if (exported && typeof exported === 'object') {
+        if (Array.isArray((exported as any).tests)) {
+          tests = [...(exported as any).tests];
+        }
+        if (typeof (exported as any).name === 'string') {
+          name = (exported as any).name;
+        }
       }
     }
+
 
     if (!name) {
       const base = path.basename(filePath);

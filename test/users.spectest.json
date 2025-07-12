@@ -1,0 +1,13 @@
+{
+  "name": "Users Tests",
+  "tests": [
+    {
+      "name": "Get users list",
+      "endpoint": "/users/"
+    },
+    {
+      "name": "Get user 1",
+      "endpoint": "/users/1"
+    }
+  ]
+}

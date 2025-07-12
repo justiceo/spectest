@@ -1,5 +1,4 @@
 export default {
-  envFile: '.env',
   startCmd: 'npm run start',
   baseUrl: 'https://localhost:8080',
   testDir: './test',

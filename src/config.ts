@@ -1,12 +1,10 @@
 import { Command } from 'commander';
 import path from 'path';
 import { existsSync } from 'fs';
-import dotenv from 'dotenv';
 import defaultConfig from './default.config';
 
 export interface CliConfig {
   configFile?: string;
-  envFile?: string;
   baseUrl?: string;
   testDir?: string;
   filePattern?: string;
@@ -33,7 +31,6 @@ function createProgram() {
     .description('Fetch-inspired declarative API testing framework')
     .version('0.1.0')
     .option('-c, --config <path>', 'path to additional config file')
-    .option('-e, --env <file>', 'path to .env file')
     .option('-u, --base-url <url>', 'base URL of the API')
     .option('-d, --test-dir <dir>', 'directory containing test suites')
     .option('-m, --file-pattern <pattern>', 'regex pattern for suite files')
@@ -61,7 +58,6 @@ function parseArgs(argv: string[]): CliConfig {
   const suiteFile = program.processedArgs[0];
   const raw: CliConfig = {
     configFile: opts.config,
-    envFile: opts.env,
     baseUrl: opts.baseUrl,
     testDir: opts.testDir,
     filePattern: opts.filePattern,
@@ -116,10 +112,6 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   cfg = { ...cfg, ...cliOpts };
   cfg.projectRoot = projectRoot;
   cfg.runningServer = (cfg.runningServer as any) || 'reuse';
-
-  if (cfg.envFile) {
-    dotenv.config({ path: path.resolve(projectRoot, cfg.envFile) });
-  }
 
   return cfg;
 }

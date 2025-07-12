@@ -5,9 +5,7 @@ src/**
 **/*.ts
 spec
 spec/**
+assets/**
 test
-build.js
 tsconfig.json
-spectest-logo.png
-spectest-logo-transparent.png
 package-lock.json

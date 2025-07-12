@@ -1,5 +1,5 @@
 <div align="center">
-  <img alt="spectest logo" src="https://github.com/justiceo/spectest/blob/3a53b5ed4673c2f54ba2452da7fb1da392c57a25/spectest-logo.png?raw=true" width="800px" />
+  <img alt="spectest logo" src="https://github.com/justiceo/spectest/blob/main/assets/spectest-logo.png?raw=true" width="800px" />
 
   <h3 style="font-family: monospace; font-weight: 200; margin-bottom:30px">api testing + truly declarative x lightning fast & absurdly simple </h3>
 
@@ -128,7 +128,7 @@ That’s where Spectest was born—out of necessity.
 | `request.*` | Other valid fetch [Request](https://developer.mozilla.org/en-US/docs/Web/API/Request) option keys, e.g. `cache`, `mode`. | none |
 | `response.status` | Expected HTTP status | `200` |
 | `response.json` | Expected partial JSON body | none |
-| `response.jsonSchema` | Zod or JSON schema for response | none |
+| `response.schema` | Zod or JSON schema for response | none |
 | `response.headers` | Expected response headers | none |
 | `response.*` | Other valid fetch [Response](https://developer.mozilla.org/en-US/docs/Web/API/Response) response keys e.g. `statusText`, `type`. | none |
 | `beforeSend` | Function used to finalize the request | none |
@@ -147,7 +147,6 @@ That’s where Spectest was born—out of necessity.
 | Option | Description | Default |
 | ------ | ----------- | ------- |
 | `configFile` | Path to an extra config file | none |
-| `envFile` | `.env` file to load before tests | `.env` |
 | `baseUrl` | Base URL of the API | `http://localhost:3000` |
 | `testDir` | Directory containing test suites | `./test` |
 | `filePattern` | Regex for suite filenames | `\.spectest\.js$` |

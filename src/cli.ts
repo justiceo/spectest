@@ -6,7 +6,6 @@ import { fileURLToPath } from 'url';
 
 import axios from 'axios';
 import { randomUUID } from 'crypto';
-import { z } from 'zod';
 
 import { loadConfig } from './config';
 import Server from './server';
@@ -14,18 +13,17 @@ import RateLimiter from './rate-limiter';
 import { resolveUserAgent } from './user-agents';
 
 
-let API_BASE_URL;
 let ALLOWED_ORIGIN;
 let api;
 let rateLimiter;
 const server = new Server();
 
 function setupEnvironment(cfg) {
-  API_BASE_URL = cfg.baseUrl || process.env.API_BASE_URL;
+  // TODO: move to config.setup
   const [origin] = (process.env.ALLOWED_ORIGINS || '').split(',');
   ALLOWED_ORIGIN = origin;
   api = axios.create({
-    baseURL: API_BASE_URL,
+    baseURL: cfg.baseUrl,
     timeout: cfg.timeout || 30000,
     validateStatus: () => true,
   });
@@ -100,59 +98,11 @@ const testState = {
   ticketId: null,
 };
 
-function convertJsonSchemaToZod(schema) {
-  if (!schema || typeof schema !== 'object') {
-    return z.any();
-  }
-  if (schema.safeParse) {
-    return schema;
-  }
-  switch (schema.type) {
-    case 'string': {
-      let s = z.string();
-      if (typeof schema.minLength === 'number') s = s.min(schema.minLength);
-      if (typeof schema.maxLength === 'number') s = s.max(schema.maxLength);
-      if (schema.pattern) s = s.regex(new RegExp(schema.pattern));
-      return s;
-    }
-    case 'number':
-    case 'integer': {
-      let n = z.number();
-      if (typeof schema.minimum === 'number') n = n.min(schema.minimum);
-      if (typeof schema.maximum === 'number') n = n.max(schema.maximum);
-      return n;
-    }
-    case 'boolean':
-      return z.boolean();
-    case 'array': {
-      const itemSchema = convertJsonSchemaToZod(schema.items || {});
-      let a = z.array(itemSchema);
-      if (typeof schema.minItems === 'number') a = a.min(schema.minItems);
-      if (typeof schema.maxItems === 'number') a = a.max(schema.maxItems);
-      return a;
-    }
-    case 'object':
-    default: {
-      const shape = {};
-      const properties = schema.properties || {};
-      Object.entries(properties).forEach(([key, propSchema]) => {
-        let prop = convertJsonSchemaToZod(propSchema);
-        if (!schema.required || !schema.required.includes(key)) {
-          prop = prop.optional();
-        }
-        shape[key] = prop;
-      });
-      let obj = z.object(shape);
-      if (schema.additionalProperties) obj = obj.passthrough();
-      else obj = obj.strict();
-      return obj;
-    }
-  }
-}
-
 function validateWithSchema(data, schema) {
-  const zodSchema = convertJsonSchemaToZod(schema);
-  const result = zodSchema.safeParse(data);
+  if (typeof schema.safeParse !== 'function') {
+    return { success: false, errors: ['response schema is not a valid zod schema'] };
+  }
+  const result = schema.safeParse(data);
   return {
     success: result.success,
     errors: result.success ? [] : result.error.issues.map((i) => i.message),
@@ -269,8 +219,8 @@ async function runTest(test) {
       });
     }
 
-    if (expectedResponse.jsonSchema) {
-      const result = validateWithSchema(response.data, expectedResponse.jsonSchema);
+    if (expectedResponse.schema) {
+      const result = validateWithSchema(response.data, expectedResponse.schema);
       if (!result.success) {
         passed = false;
         errors.push(`Schema validation failed: ${result.errors.join(', ')}`);
@@ -509,7 +459,7 @@ async function runTestsInOrder(tests, options = {}) {
 
 async function runAllTests(cfg, verbose = false, tags = []) {
   const progStart = Date.now();
-  console.log(`🚀 Starting E2E Tests against ${API_BASE_URL}`);
+  console.log(`🚀 Starting E2E Tests against ${cfg.baseUrl}`);
   console.log('='.repeat(50));
 
   const suites = await discoverSuites(cfg);
@@ -608,19 +558,24 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     const mid = Math.floor(latencies.length / 2);
     const median = latencies.length % 2 === 0 ? (latencies[mid - 1] + latencies[mid]) / 2 : latencies[mid];
 
-    console.log('\n⏱️  Latency Summary:');
-    console.table([
-      { Metric: 'Min (ms)', Value: min },
-      { Metric: 'Median (ms)', Value: median },
-      { Metric: 'Average (ms)', Value: Number(avg.toFixed(2)) },
-      { Metric: 'Max (ms)', Value: max },
-    ]);
+    
+    if (verbose) {
+      console.log('\n⏱️  Latency Summary:');
+      console.table([
+        { Metric: 'Min (ms)', Value: min },
+        { Metric: 'Median (ms)', Value: median },
+        { Metric: 'Average (ms)', Value: Number(avg.toFixed(2)) },
+        { Metric: 'Max (ms)', Value: max },
+      ]);
 
-    const slowCount = parseInt(process.env.SLOW_TEST_COUNT || '5', 10);
-    const slowTests = [...testResults].sort((a, b) => b.latency - a.latency).slice(0, slowCount);
-    if (slowTests.length > 0) {
-      console.log(`\n🐢 Slowest ${slowTests.length} Tests:`);
-      console.table(slowTests.map((t) => ({ Test: t.testName, 'Latency (ms)': t.latency })));
+      const slowCount = 5; // TODO: Move to config
+      const slowTests = [...testResults].sort((a, b) => b.latency - a.latency).slice(0, slowCount);
+      if (slowTests.length > 0) {
+        console.log(`\n🐢 Slowest ${slowTests.length} Tests:`);
+        console.table(slowTests.map((t) => ({ Test: t.testName, 'Latency (ms)': t.latency })));
+      }
+    } else {
+      console.log(`\n⏱️  Latency: min ${min}ms; avg ${Number(avg.toFixed(2))}ms; max ${max}ms`);
     }
   }
   
@@ -681,11 +636,10 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   const totalTime = Date.now() - progStart;
-  console.log(`⏲️  Testing time: ${(totalTestTime / 1000).toFixed(2)}s`);
-  console.log(`⏲️  Elapsed time (incl. server startup/teardown): ${(totalTime / 1000).toFixed(2)}s`);
+  console.log(`⏱️  Testing time: ${(totalTestTime / 1000).toFixed(2)}s; Total time: ${(totalTime / 1000).toFixed(2)}s`);
 
   if (passed === total) {
-    console.log(`🎉  ${passed}/${total} tests passed!`);
+    console.log(`✅  ${passed}/${total} tests passed!`);
     process.exit(0);
   } else {
     console.log(`⚠️  ${passed}/${total} tests passed`);

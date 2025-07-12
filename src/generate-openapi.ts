@@ -14,7 +14,7 @@ interface TestCase {
   response?: {
     status?: number;
     json?: any;
-    jsonSchema?: any;
+    schema?: any;
     headers?: Record<string, any>;
   };
 }
@@ -75,9 +75,9 @@ export async function generateOpenApi() {
 
     const status = test.response?.status || 200;
     const respObj: any = { description: '' };
-    if (test.response?.jsonSchema) {
+    if (test.response?.schema) {
       respObj.content = {
-        'application/json': { schema: test.response.jsonSchema },
+        'application/json': { schema: test.response.schema },
       };
     } else if (test.response?.json) {
       respObj.content = {

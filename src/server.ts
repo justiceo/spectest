@@ -2,7 +2,6 @@ import axios from 'axios';
 import { spawn, spawnSync } from 'child_process';
 
 class Server {
-  private allowedOrigin = '';
   private serverProcess: ReturnType<typeof spawn> | null = null;
   private startedByHelper = false;
   private serverLogs: Array<{ timestamp: string; type: 'stdout' | 'stderr'; message: string }> = [];
@@ -19,12 +18,10 @@ class Server {
   }
 
   setConfig(cfg: {
-    allowedOrigin?: string;
     startCommand?: string;
     serverUrl?: string;
     runningServer?: 'reuse' | 'fail' | 'kill';
   } = {}): void {
-    if (cfg.allowedOrigin) this.allowedOrigin = cfg.allowedOrigin;
     if (cfg.startCommand) this.setStartCommand(cfg.startCommand);
     if (cfg.serverUrl) this.setServerUrl(cfg.serverUrl);
     if (cfg.runningServer) this.runningServer = cfg.runningServer;

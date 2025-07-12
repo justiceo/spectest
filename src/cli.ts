@@ -13,15 +13,15 @@ import RateLimiter from './rate-limiter';
 import { resolveUserAgent } from './user-agents';
 
 
-let ALLOWED_ORIGIN;
 let api;
 let rateLimiter;
 const server = new Server();
 
+const testState = {
+  sessionCookie: null,
+};
+
 function setupEnvironment(cfg) {
-  // TODO: move to config.setup
-  const [origin] = (process.env.ALLOWED_ORIGINS || '').split(',');
-  ALLOWED_ORIGIN = origin;
   api = axios.create({
     baseURL: cfg.baseUrl,
     timeout: cfg.timeout || 30000,
@@ -30,7 +30,6 @@ function setupEnvironment(cfg) {
   api.defaults.headers.common['User-Agent'] = resolveUserAgent(cfg.userAgent);
 
   server.setConfig({
-    allowedOrigin: ALLOWED_ORIGIN,
     startCommand: cfg.startCmd,
     serverUrl: cfg.baseUrl,
     runningServer: cfg.runningServer,
@@ -88,16 +87,6 @@ async function discoverSuites(cfg) {
   return suites;
 }
 
-const testState = {
-  sessionToken: null,
-  sessionCookie: null,
-  userId: null,
-  paymentIntentId: null,
-  testUserEmail: null,
-  oneTimeToken: null,
-  ticketId: null,
-};
-
 function validateWithSchema(data, schema) {
   if (typeof schema.safeParse !== 'function') {
     return { success: false, errors: ['response schema is not a valid zod schema'] };
@@ -135,12 +124,7 @@ async function runTest(test) {
       method: test.request?.method || 'GET',
       url: test.endpoint,
       data: test.request?.body,
-      headers: {
-        'x-request-id': requestId,
-        Origin: ALLOWED_ORIGIN,
-        'X-Requested-With': 'XMLHttpRequest',
-        ...(test.request?.headers || {}),
-      },
+      headers: {...test.request?.headers},
     };
 
     if (test.request?.credentials === 'include' && testState.sessionCookie) {

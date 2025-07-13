@@ -1,7 +1,7 @@
 <div align="center">
   <img alt="spectest logo" src="https://github.com/justiceo/spectest/blob/main/assets/spectest-logo.png?raw=true" width="800px" />
 
-  <h3 style="font-family: monospace; font-weight: 200; margin-bottom:30px">api testing + truly declarative x lightning fast & absurdly simple </h3>
+  <h3 style="font-family: monospace; font-weight: 200;">api testing + truly declarative x lightning fast & absurdly simple </h3><br>
 
 [![Build](https://github.com/justiceo/spectest/actions/workflows/build.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/build.yml) 
 [![Test](https://github.com/justiceo/spectest/actions/workflows/test.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/test.yml) 
@@ -64,7 +64,7 @@ const tests = [
   },
 ];
 
-export default { name: 'jsonpayload', tests };
+export default tests;
 ```
 
 A `*.spectest.js` file can have `classes`, `functions`, use `imports` and do anything you would with Javascript. The default export may be either an array of test cases or an object with a `tests` array and optional `name` property. For the full schema of a test case, see [Testcase reference](#test-case-options)
@@ -167,6 +167,41 @@ That’s where Spectest was born—out of necessity.
 
 
 ## API Testing Tips
+
+### Making dynamic assertions
+
+The responses from APIs are often dynamic, however we often know their structure. For example, expecting an API to return a timestamp but unable to assert on a timestamp without mocking. For these cases, use **[Zod](https://zod.dev/) schema** to describe the shape and properties of the data expected in the response.
+
+The second example response above could have been written as:
+
+```js
+import { z } from 'zod';
+
+const tests = [
+  {
+    name: "Create a post",
+    endpoint: "/posts",
+    request: {
+      method: "POST",
+      headers: { "Content-Type": "application/json; charset=UTF-8" },
+      body: { title: "foo", body: "bar", userId: 1 },
+    },
+    response: {
+      status: 201,
+      schema: z.object({
+        id: z.number(),
+        title: z.string(),
+        body: z.literal('foo'),
+        userId: z.number().min(1)
+      }),
+    },
+  },
+];
+
+export default tests
+```
+
+With `schema`, you can describe the shape of the data while allowing it to take on different literal values. You can use both `json` and `schema` for assertions in the same test case. 
 
 ### Controlling concurrency
 

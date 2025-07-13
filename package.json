@@ -1,6 +1,6 @@
 {
   "name": "spectest",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Declarative API testing that is fast and simple",
   "main": "dist/cli.js",
   "scripts": {

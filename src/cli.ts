@@ -5,7 +5,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import axios from 'axios';
-import { randomUUID } from 'crypto';
 
 import { loadConfig } from './config';
 import Server from './server';
@@ -118,16 +117,15 @@ async function runTest(test) {
     });
   }
   const startTime = Date.now();
-  let providedId;
+  let requestId: string | null = null;
   if (test.request?.headers) {
     for (const [h, v] of Object.entries(test.request.headers)) {
       if (h.toLowerCase() === 'x-request-id') {
-        providedId = String(v);
+        requestId = String(v);
         break;
       }
     }
   }
-  const requestId = providedId || randomUUID().substring(0, 5);
   const testTimeout =
     typeof test.timeout === 'number' && !Number.isNaN(test.timeout)
       ? test.timeout
@@ -161,7 +159,9 @@ async function runTest(test) {
     }
 
     if (typeof test.postTest === 'function') {
-      const requestLogs = server.getLogs().filter((log) => log.message.includes(requestId));
+      const requestLogs = requestId
+        ? server.getLogs().filter((log) => log.message.includes(requestId))
+        : [];
       await test.postTest(response, testState, { requestId, logs: requestLogs });
     }
 

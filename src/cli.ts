@@ -231,6 +231,7 @@ async function runTest(test) {
       latency,
       requestId,
       testName: test.name,
+      operationId: test.operationId,
       suiteName: test.suiteName,
       request: config,
       response: {
@@ -248,6 +249,7 @@ async function runTest(test) {
       latency,
       requestId,
       testName: test.name,
+      operationId: test.operationId,
       suiteName: test.suiteName,
       timedOut: isTimeout,
       request: error.config || undefined,
@@ -464,6 +466,10 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     suite.tests.map((t) => ({ ...t, suiteName: suite.name }))
   );
 
+  tests.forEach((t) => {
+    if (!t.operationId) t.operationId = t.name;
+  });
+
   // TODO: Do not proceed if tests array is empty.
 
   try {
@@ -504,6 +510,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   if (cfg.snapshotFile) {
     const snapshotCases = testResults.map((r) => ({
       name: r.testName,
+      operationId: r.operationId,
       suite: r.suiteName,
       request: r.request,
       response: r.response,

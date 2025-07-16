@@ -121,6 +121,7 @@ That’s where Spectest was born—out of necessity.
 | Option | Description | Default |
 | ------ | ----------- | ------- |
 | `name` | Human readable test name | required |
+| `operationId` | Unique identifier for the operation | `name` |
 | `endpoint` | Request path relative to the base URL | required |
 | `request.method` | HTTP method | `GET` |
 | `request.headers` | Additional request headers | none |

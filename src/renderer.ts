@@ -48,7 +48,9 @@ export default class Renderer {
         console.log(`[${icon}] ${result.testName} (${result.latency}ms)`);
 
         if (this.verbose || !result.passed) {
-          const requestLogs = serverLogs.filter((log) => log.message.includes(result.requestId));
+          const requestLogs = result.requestId
+            ? serverLogs.filter((log) => log.message.includes(result.requestId))
+            : [];
           if (requestLogs.length > 0) {
             requestLogs.forEach((entry) => {
               const message = entry.type === 'stderr'
@@ -56,7 +58,7 @@ export default class Renderer {
                 : `  ${entry.timestamp}: ${entry.message}`;
               console.log(message);
             });
-          } else {
+          } else if (result.requestId) {
             console.log(`  No server logs found for request ID: ${result.requestId}`);
           }
 

@@ -415,8 +415,59 @@ async function runTests(tests, renderer, options = {}) {
     shuffle(runnableTests);
   }
 
-  const results = await Promise.all(runnableTests.map((t) => runTest(t)));
-  return { results, skippedTests };
+  const opIdMap = new Map<string, any>();
+  runnableTests.forEach((t) => {
+    opIdMap.set(t.operationId, t);
+    t.dependents = [];
+    t.unresolvedDependencies = 0;
+    t.__runtimeSkip = false;
+  });
+
+  runnableTests.forEach((t) => {
+    if (Array.isArray(t.dependsOn) && t.dependsOn.length > 0) {
+      t.unresolvedDependencies = t.dependsOn.length;
+      t.dependsOn.forEach((depId: string) => {
+        const dep = opIdMap.get(depId);
+        if (dep) {
+          dep.dependents.push(t);
+        } else {
+          t.unresolvedDependencies -= 1;
+        }
+      });
+    }
+  });
+
+  const queue = runnableTests.filter((t) => t.unresolvedDependencies === 0);
+  const results = [] as any[];
+  const runtimeSkipped = new Set<any>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || current.__runtimeSkip) continue;
+
+    // eslint-disable-next-line no-await-in-loop
+    const result = await runTest(current);
+    results.push(result);
+
+    if (!result.passed) {
+      current.dependents.forEach((d: any) => {
+        if (!d.__runtimeSkip) {
+          d.__runtimeSkip = true;
+          runtimeSkipped.add(d);
+        }
+      });
+    } else {
+      current.dependents.forEach((d: any) => {
+        d.unresolvedDependencies -= 1;
+        if (d.unresolvedDependencies === 0 && !d.__runtimeSkip) {
+          queue.push(d);
+        }
+      });
+    }
+  }
+
+  const skipped = [...runtimeSkipped];
+  return { results, skippedTests: [...skippedTests, ...skipped] };
 }
 
 async function runAllTests(cfg, verbose = false, tags = []) {

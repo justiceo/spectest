@@ -122,6 +122,7 @@ That’s where Spectest was born—out of necessity.
 | ------ | ----------- | ------- |
 | `name` | Human readable test name | required |
 | `operationId` | Unique identifier for the operation | `name` |
+| `dependsOn` | Array of `operationId` strings that must pass before this test runs | none |
 | `endpoint` | Request path relative to the base URL | required |
 | `request.method` | HTTP method | `GET` |
 | `request.headers` | Additional request headers | none |
@@ -300,6 +301,7 @@ Use the `timeout` option to limit how long each test case may run. Specify `time
 ### Check for robustness of API
 
 * **Randomize tests**: Run tests with `--randomize` to uncover unexpected test order dependencies. This is especially useful for serverless functions that should be stateless.
+* **Explicit dependencies**: Use the `dependsOn` array on a test case to run it only after the listed operations succeed.
 
 * **Load testing**: Use the `--bombard` parameter to literally bombard the API with requests. It can also be set at the individual test case level to determine how an API would handle a flooding of that endpoint.
 

@@ -137,6 +137,7 @@ That’s where Spectest was born—out of necessity.
 | `tags` | Tags used for filtering | none |
 | `skip` | Skip the test case | `false` |
 | `focus` | Run only focused tests when present | `false` |
+| `dependsOn` | Operation IDs of tests that must complete successfully before this test runs | none |
 | `repeat` | Extra sequential runs of the test | `0` |
 | `bombard` | Additional simultaneous runs of the test | `0` |
 | `delay` | Milliseconds to wait before running | none |
@@ -300,6 +301,7 @@ Use the `timeout` option to limit how long each test case may run. Specify `time
 ### Check for robustness of API
 
 * **Randomize tests**: Run tests with `--randomize` to uncover unexpected test order dependencies. This is especially useful for serverless functions that should be stateless.
+* **Test dependencies**: Use the `dependsOn` field to declare operations that must succeed before a test is executed.
 
 * **Load testing**: Use the `--bombard` parameter to literally bombard the API with requests. It can also be set at the individual test case level to determine how an API would handle a flooding of that endpoint.
 

@@ -415,7 +415,65 @@ async function runTests(tests, renderer, options = {}) {
     shuffle(runnableTests);
   }
 
-  const results = await Promise.all(runnableTests.map((t) => runTest(t)));
+  const opMap = new Map();
+  runnableTests.forEach((t) => {
+    (t as any).dependents = [];
+    (t as any).unresolvedDependencies = 0;
+    opMap.set(t.operationId, t);
+  });
+
+  runnableTests.forEach((t) => {
+    const deps = Array.isArray((t as any).dependsOn) ? (t as any).dependsOn : [];
+    deps.forEach((dep) => {
+      const parent = opMap.get(dep);
+      if (parent) {
+        parent.dependents.push(t);
+        (t as any).unresolvedDependencies += 1;
+      }
+    });
+  });
+
+  const scheduled = new Set();
+  const results: any[] = [];
+
+  function skipTestAndDependents(test: any) {
+    if (test._skipped) return;
+    test._skipped = true;
+    skippedTests.push(test);
+    (test.dependents || []).forEach((d: any) => {
+      skipTestAndDependents(d);
+    });
+  }
+
+  const runPromises: Promise<any>[] = [];
+
+  function schedule(test: any) {
+    if (scheduled.has(test) || test._skipped) return;
+    scheduled.add(test);
+    const p = runTest(test).then((res) => {
+      results.push(res);
+      const success = res.passed;
+      (test.dependents || []).forEach((d: any) => {
+        if (!success) {
+          skipTestAndDependents(d);
+        } else {
+          d.unresolvedDependencies -= 1;
+          if (d.unresolvedDependencies === 0) {
+            schedule(d);
+          }
+        }
+      });
+    });
+    runPromises.push(p);
+  }
+
+  runnableTests.forEach((t) => {
+    if (t.unresolvedDependencies === 0) {
+      schedule(t);
+    }
+  });
+
+  await Promise.all(runPromises);
   return { results, skippedTests };
 }
 

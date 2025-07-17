@@ -110,6 +110,40 @@ function validateWithSchema(data, schema) {
   };
 }
 
+function validateTests(tests: any[]) {
+  const nameSet = new Set<string>();
+  const opIdSet = new Set<string>();
+
+  tests.forEach((t, idx) => {
+    if (!t.name) {
+      throw new Error(`Test case at index ${idx} is missing a name`);
+    }
+    if (nameSet.has(t.name)) {
+      throw new Error(`Duplicate test name '${t.name}' detected`);
+    }
+    nameSet.add(t.name);
+
+    if (!t.endpoint) {
+      throw new Error(`Test '${t.name}' is missing an endpoint`);
+    }
+
+    if (t.rps !== undefined) {
+      const rps = Number(t.rps);
+      if (!Number.isFinite(rps) || rps < 0) {
+        throw new Error(`Test '${t.name}' has invalid rps value '${t.rps}'`);
+      }
+    }
+
+    if (!t.operationId) {
+      t.operationId = t.name;
+    }
+    if (opIdSet.has(t.operationId)) {
+      throw new Error(`Duplicate operationId '${t.operationId}' detected`);
+    }
+    opIdSet.add(t.operationId);
+  });
+}
+
 async function runTest(test) {
   if (typeof test.delay === 'number' && test.delay > 0) {
     await new Promise((resolve) => {
@@ -469,6 +503,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   tests.forEach((t) => {
     if (!t.operationId) t.operationId = t.name;
   });
+
+  validateTests(tests);
 
   // TODO: Do not proceed if tests array is empty.
 

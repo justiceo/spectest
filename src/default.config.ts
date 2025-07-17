@@ -6,7 +6,6 @@ export default {
   rps: Infinity,
   timeout: 30000,
   randomize: false,
-  bail: false,
   happy: false,
   filter: '',
   runningServer: 'reuse',

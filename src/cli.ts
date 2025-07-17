@@ -264,34 +264,17 @@ async function runTest(test) {
   }
 }
 
-function groupTestsByOrder(tests) {
-  const testGroups = new Map();
-  tests.forEach((test) => {
-    const order = test.order ?? 0;
-    if (!testGroups.has(order)) {
-      testGroups.set(order, []);
-    }
-    testGroups.get(order).push(test);
-  });
-  return new Map([...testGroups.entries()].sort(([a], [b]) => a - b));
-}
-
 function expandRepeats(tests) {
   return tests.flatMap((test) => {
     const repeat = Number.isFinite(Number(test.repeat)) ? Number(test.repeat) : 0;
     const bombard = Number.isFinite(Number(test.bombard)) ? Number(test.bombard) : 0;
     const totalRuns = repeat + 1;
-    const baseOrder = test.order ?? 0;
-
     const repeated = Array.from({ length: totalRuns }).map((_, idx) => {
       if (idx === 0) {
-        // eslint-disable-next-line no-param-reassign
-        test.order = baseOrder;
         return test;
       }
       const clone = Object.assign(Object.create(Object.getPrototypeOf(test)), test);
       clone.name = `(Run ${idx + 1}) ${test.name}`;
-      clone.order = baseOrder + idx;
       return clone;
     });
 
@@ -301,7 +284,6 @@ function expandRepeats(tests) {
         if (bIdx === 0) return t;
         const clone = Object.assign(Object.create(Object.getPrototypeOf(t)), t);
         clone.name = `(Bombard ${bIdx + 1}) ${t.name}`;
-        clone.order = t.order;
         return clone;
       });
     });
@@ -401,8 +383,8 @@ function shuffle(arr) {
   }
 }
 
-async function runTestsInOrder(tests, renderer, options = {}) {
-  const { tags, randomize, bail, happy, filter, snapshotFile } = options;
+async function runTests(tests, renderer, options = {}) {
+  const { tags, randomize, happy, filter, snapshotFile } = options;
   const expanded = expandRepeats(tests);
   const focusResult = filterTestsByFocus(expanded);
   const tagResult = filterTestsByTags(focusResult.filtered, tags);
@@ -419,41 +401,22 @@ async function runTestsInOrder(tests, renderer, options = {}) {
     }
   }
   const happyResult = filterTestsByHappy(nameResult.filtered, happyFlag);
-  const testGroups = groupTestsByOrder(happyResult.filtered);
+  const filtered = happyResult.filtered.filter((t) => !t.skip);
   const skippedTests = [
     ...focusResult.skipped,
     ...tagResult.skipped,
     ...nameResult.skipped,
     ...happyResult.skipped,
+    ...happyResult.filtered.filter((t) => t.skip),
   ];
-  const initial = Promise.resolve({ results: [], bail: false });
-  const final = await Array.from(testGroups).reduce(async (accPromise, [order, testsInGroup]) => {
-    const accumulator = await accPromise;
-    if (accumulator.bail) {
-      skippedTests.push(...testsInGroup);
-      return accumulator;
-    }
 
-    const runnableTests = testsInGroup.filter((t) => !t.skip);
-    const groupSkipped = testsInGroup.filter((t) => t.skip);
-    skippedTests.push(...groupSkipped);
-    if (randomize) {
-      shuffle(runnableTests);
-    }
-    renderer.runningOrder(order, runnableTests.length);
-    const groupResults = await Promise.all(
-      runnableTests.map(async (test) => {
-        const result = await runTest(test);
-        return result;
-      })
-    );
-    const failed = groupResults.some((r) => !r.passed);
-    return {
-      results: [...accumulator.results, ...groupResults],
-      bail: bail && failed,
-    };
-  }, initial);
-  return { results: final.results, skippedTests };
+  let runnableTests = [...filtered];
+  if (randomize) {
+    shuffle(runnableTests);
+  }
+
+  const results = await Promise.all(runnableTests.map((t) => runTest(t)));
+  return { results, skippedTests };
 }
 
 async function runAllTests(cfg, verbose = false, tags = []) {
@@ -481,10 +444,9 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 
   console.log('📋 Running tests...');
   const testStart = Date.now();
-  const { results: testResults, skippedTests } = await runTestsInOrder(tests, renderer, {
+  const { results: testResults, skippedTests } = await runTests(tests, renderer, {
     tags,
     randomize: cfg.randomize,
-    bail: cfg.bail,
     happy: cfg.happy,
     filter: cfg.filter,
     snapshotFile: cfg.snapshotFile

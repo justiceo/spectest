@@ -13,7 +13,6 @@ export interface CliConfig {
   rps?: number;
   timeout?: number;
   snapshotFile?: string;
-  bail?: boolean;
   randomize?: boolean;
   happy?: boolean;
   filter?: string;
@@ -70,9 +69,6 @@ function parseArgs(argv: string[]): CliConfig {
           break;
         case 'snapshot':
           raw.snapshotFile = value;
-          break;
-        case 'bail':
-          raw.bail = true;
           break;
         case 'randomize':
           raw.randomize = true;

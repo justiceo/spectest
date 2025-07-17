@@ -18,9 +18,6 @@ export default class Renderer {
     console.log('='.repeat(50));
   }
 
-  runningOrder(order: number, count: number): void {
-    console.log(`📋 Running tests with order ${order} (${count} tests)...`);
-  }
 
   showSkippedTests(skipped: any[]): void {
     if (skipped.length === 0) return;

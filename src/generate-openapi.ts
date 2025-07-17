@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 interface TestCase {
   name: string;
   endpoint: string;
+  operationId?: string;
   request?: {
     method?: string;
     headers?: Record<string, string>;
@@ -27,7 +28,7 @@ async function loadSuites(testDir = './spec', filePattern = /\.(suite|suites)\./
   return modules.reduce<TestCase[]>((acc, mod) => {
     if (Array.isArray(mod.default)) acc.push(...mod.default);
     return acc;
-  }, []);
+  }, []).map((t) => ({ ...t, operationId: t.operationId || t.name }));
 }
 
 function dedupeTests(tests: TestCase[]): TestCase[] {
@@ -62,6 +63,7 @@ export async function generateOpenApi() {
     spec.paths[pathKey] = spec.paths[pathKey] || {};
     const op: any = {
       summary: test.name,
+      operationId: test.operationId || test.name,
       responses: {},
     };
 

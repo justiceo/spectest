@@ -42,25 +42,25 @@ function seq(tests) {
   if (tests.length === 0) return tests;
 
   const first = tests[0];
-  let lastOrder = typeof first.order === "number" ? first.order : 0;
+  let lastBatch = typeof first.batch === "number" ? first.batch : 0;
 
-  if (typeof first.order !== "number") {
-    first.order = lastOrder;
+  if (typeof first.batch !== "number") {
+    first.batch = lastBatch;
   }
 
   for (let i = 1; i < tests.length; i += 1) {
     const test = tests[i];
-    if (typeof test.order === "number") {
-      if (test.order > lastOrder) {
-        lastOrder = test.order;
-        // keep predefined order if it maintains sequence
+    if (typeof test.batch === "number") {
+      if (test.batch > lastBatch) {
+        lastBatch = test.batch;
+        // keep predefined batch if it maintains sequence
       } else {
-        lastOrder += 1;
-        test.order = lastOrder;
+        lastBatch += 1;
+        test.batch = lastBatch;
       }
     } else {
-      lastOrder += 1;
-      test.order = lastOrder;
+      lastBatch += 1;
+      test.batch = lastBatch;
     }
   }
 

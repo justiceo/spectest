@@ -18,8 +18,8 @@ export default class Renderer {
     console.log('='.repeat(50));
   }
 
-  runningOrder(order: number, count: number): void {
-    console.log(`📋 Running tests with order ${order} (${count} tests)...`);
+  runningBatch(batch: number, count: number): void {
+    console.log(`📋 Running batch ${batch} (${count} tests)...`);
   }
 
   showSkippedTests(skipped: any[]): void {

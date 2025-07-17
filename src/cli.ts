@@ -264,14 +264,14 @@ async function runTest(test) {
   }
 }
 
-function groupTestsByOrder(tests) {
+function groupTestsByBatch(tests) {
   const testGroups = new Map();
   tests.forEach((test) => {
-    const order = test.order ?? 0;
-    if (!testGroups.has(order)) {
-      testGroups.set(order, []);
+    const batch = test.batch ?? 0;
+    if (!testGroups.has(batch)) {
+      testGroups.set(batch, []);
     }
-    testGroups.get(order).push(test);
+    testGroups.get(batch).push(test);
   });
   return new Map([...testGroups.entries()].sort(([a], [b]) => a - b));
 }
@@ -281,17 +281,17 @@ function expandRepeats(tests) {
     const repeat = Number.isFinite(Number(test.repeat)) ? Number(test.repeat) : 0;
     const bombard = Number.isFinite(Number(test.bombard)) ? Number(test.bombard) : 0;
     const totalRuns = repeat + 1;
-    const baseOrder = test.order ?? 0;
+    const baseBatch = test.batch ?? 0;
 
     const repeated = Array.from({ length: totalRuns }).map((_, idx) => {
       if (idx === 0) {
         // eslint-disable-next-line no-param-reassign
-        test.order = baseOrder;
+        test.batch = baseBatch;
         return test;
       }
       const clone = Object.assign(Object.create(Object.getPrototypeOf(test)), test);
       clone.name = `(Run ${idx + 1}) ${test.name}`;
-      clone.order = baseOrder + idx;
+      clone.batch = baseBatch + idx;
       return clone;
     });
 
@@ -301,7 +301,7 @@ function expandRepeats(tests) {
         if (bIdx === 0) return t;
         const clone = Object.assign(Object.create(Object.getPrototypeOf(t)), t);
         clone.name = `(Bombard ${bIdx + 1}) ${t.name}`;
-        clone.order = t.order;
+        clone.batch = t.batch;
         return clone;
       });
     });
@@ -419,7 +419,7 @@ async function runTestsInOrder(tests, renderer, options = {}) {
     }
   }
   const happyResult = filterTestsByHappy(nameResult.filtered, happyFlag);
-  const testGroups = groupTestsByOrder(happyResult.filtered);
+  const testGroups = groupTestsByBatch(happyResult.filtered);
   const skippedTests = [
     ...focusResult.skipped,
     ...tagResult.skipped,
@@ -427,7 +427,7 @@ async function runTestsInOrder(tests, renderer, options = {}) {
     ...happyResult.skipped,
   ];
   const initial = Promise.resolve({ results: [], bail: false });
-  const final = await Array.from(testGroups).reduce(async (accPromise, [order, testsInGroup]) => {
+  const final = await Array.from(testGroups).reduce(async (accPromise, [batch, testsInGroup]) => {
     const accumulator = await accPromise;
     if (accumulator.bail) {
       skippedTests.push(...testsInGroup);
@@ -440,7 +440,7 @@ async function runTestsInOrder(tests, renderer, options = {}) {
     if (randomize) {
       shuffle(runnableTests);
     }
-    renderer.runningOrder(order, runnableTests.length);
+    renderer.runningBatch(batch, runnableTests.length);
     const groupResults = await Promise.all(
       runnableTests.map(async (test) => {
         const result = await runTest(test);

@@ -134,12 +134,12 @@ That’s where Spectest was born—out of necessity.
 | `response.*` | Other valid fetch [Response](https://developer.mozilla.org/en-US/docs/Web/API/Response) response keys e.g. `statusText`, `type`. | none |
 | `beforeSend` | Function used to finalize the request | none |
 | `postTest` | Function used to process response, usually to extract and save data. | none |
-| `order` | Execution order for grouping tests | `0` |
+| `batch` | Batch number for grouping tests | `0` |
 | `tags` | Tags used for filtering | none |
 | `skip` | Skip the test case | `false` |
 | `focus` | Run only focused tests when present | `false` |
 | `repeat` | Extra sequential runs of the test | `0` |
-| `bombard` | Additional runs at the same order | `0` |
+| `bombard` | Additional runs in the same batch | `0` |
 | `delay` | Milliseconds to wait before running | none |
 | `timeout` | Per-test timeout override | runtime `timeout` (30000ms) |
 
@@ -210,7 +210,7 @@ By default, test requests are sent in parallel, if your API calls other APIs dur
 
 ### Testing multi-step flows
 
-The `order` test case parameter forces tests to be executed in pre-defined order. By default all tests execute have `order` of `0`, a test case with `order > 0` will execute after all cases with `order == 0`.
+The `batch` test case parameter forces tests to be executed in pre-defined order. By default all tests have a `batch` of `0`, a test case with `batch > 0` will execute after all cases with `batch == 0`.
 
 The test case `postTest` function can be used to extract and save data from a test case.<br>
 In a similar vein, the test case `beforeSend` function can be used make final runtime modifications to a request before send.
@@ -230,7 +230,7 @@ export default [
       body: { username: 'admin', password: 'secret' }
     },
     postTest: async ({ json }) => { token = json.token; },
-    order: 0,
+    batch: 0,
   },
   {
     name: 'Fetch profile',
@@ -239,7 +239,7 @@ export default [
       req.headers = { ...req.headers, Authorization: `Bearer ${token}` };
     },
     response: { status: 200 }
-    order: 1,
+    batch: 1,
   }
 ];
 ```
@@ -303,7 +303,7 @@ Use the `timeout` option to limit how long each test case may run. Specify `time
 
 ### Check for robustness of API
 
-* **Randomize tests**: Run tests with `--randomize` to uncover unexpected test order dependencies. Randomization doesn't affect tests with explicitly declared order, using `order`. This is especially useful for serverless functions, that should be stateless.
+* **Randomize tests**: Run tests with `--randomize` to uncover unexpected batch order dependencies. Randomization doesn't affect tests with explicitly declared batches, using `batch`. This is especially useful for serverless functions, that should be stateless.
 
 * **Load testing**: Use the `--bombard` parameter to literally bombard the API with requests. It can also be set at the individual test case level to determine how an API would handle a flooding of that endpoint.
 

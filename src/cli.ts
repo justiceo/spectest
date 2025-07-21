@@ -10,6 +10,7 @@ import { loadConfig } from './config';
 import Server from './server';
 import RateLimiter from './rate-limiter';
 import { resolveUserAgent } from './user-agents';
+import type { Suite, TestCase } from "./types";
 
 
 let api;
@@ -38,11 +39,11 @@ function setupEnvironment(cfg) {
   rateLimiter = new RateLimiter(cfg.rps || Infinity);
 }
 
-async function discoverSuites(cfg) {
+async function discoverSuites(cfg): Promise<Suite[]> {
   const projectRoot = cfg.projectRoot || process.cwd();
 
-  async function loadSuite(filePath: string) {
-    let tests: any[] = [];
+  async function loadSuite(filePath: string): Promise<Suite> {
+    let tests: TestCase[] = [];
     let name: string | undefined;
 
     if (filePath.endsWith('.json')) {
@@ -90,7 +91,7 @@ async function discoverSuites(cfg) {
   const files = await readdir(testDir);
   const pattern = new RegExp(cfg.filePattern);
   const suiteFiles = files.filter((f) => pattern.test(f)).sort();
-  const suites = [] as Array<{ name: string; tests: any[] }>;
+  const suites: Suite[] = [];
   for (const file of suiteFiles) {
     const suitePath = path.join(testDir, file);
     // eslint-disable-next-line no-await-in-loop
@@ -111,7 +112,7 @@ function validateWithSchema(data, schema) {
   };
 }
 
-function validateTests(tests: any[]) {
+function validateTests(tests: TestCase[]) {
   const nameSet = new Set<string>();
   const opIdSet = new Set<string>();
 
@@ -145,7 +146,7 @@ function validateTests(tests: any[]) {
   });
 }
 
-async function runTest(test) {
+async function runTest(test: TestCase) {
   if (typeof test.delay === 'number' && test.delay > 0) {
     await new Promise((resolve) => {
       setTimeout(resolve, test.delay);
@@ -299,7 +300,7 @@ async function runTest(test) {
   }
 }
 
-function expandRepeats(tests) {
+function expandRepeats(tests: TestCase[]) {
   return tests.flatMap((test) => {
     const repeat = Number.isFinite(Number(test.repeat)) ? Number(test.repeat) : 0;
     const bombard = Number.isFinite(Number(test.bombard)) ? Number(test.bombard) : 0;
@@ -418,7 +419,7 @@ function shuffle(arr) {
   }
 }
 
-async function runTests(tests, renderer, options = {}) {
+async function runTests(tests: TestCase[], renderer, options = {}) {
   const { tags, randomize, happy, filter, snapshotFile } = options;
   const expanded = expandRepeats(tests);
   const focusResult = filterTestsByFocus(expanded);
@@ -525,7 +526,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   renderer.start(cfg.baseUrl);
 
   const suites = await discoverSuites(cfg);
-  const tests = suites.flatMap((suite) =>
+  const tests: TestCase[] = suites.flatMap((suite) =>
     suite.tests.map((t) => ({ ...t, suiteName: suite.name }))
   );
 

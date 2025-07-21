@@ -10,4 +10,5 @@ export default {
   filter: '',
   runningServer: 'reuse',
   userAgent: 'chrome_windows',
+  proxy: '',
 };

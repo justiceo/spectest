@@ -11,6 +11,23 @@ import Server from './server';
 import RateLimiter from './rate-limiter';
 import { resolveUserAgent } from './user-agents';
 
+function parseProxyUrl(url: string) {
+  try {
+    const u = new URL(url);
+    const auth = u.username
+      ? { username: decodeURIComponent(u.username), password: decodeURIComponent(u.password) }
+      : undefined;
+    return {
+      protocol: u.protocol.replace(':', ''),
+      host: u.hostname,
+      port: parseInt(u.port, 10) || (u.protocol === 'https:' ? 443 : 80),
+      auth,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 
 let api;
 let rateLimiter;
@@ -26,6 +43,7 @@ function setupEnvironment(cfg) {
     baseURL: cfg.baseUrl,
     timeout: cfg.timeout || 30000,
     validateStatus: () => true,
+    ...(cfg.proxy ? { proxy: parseProxyUrl(cfg.proxy) } : {}),
   });
   api.defaults.headers.common['User-Agent'] = resolveUserAgent(cfg.userAgent);
 

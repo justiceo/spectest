@@ -18,6 +18,7 @@ export interface CliConfig {
   filter?: string;
   verbose?: boolean;
   userAgent?: string;
+  proxy?: string;
   suiteFile?: string;
   projectRoot?: string;
 }
@@ -87,6 +88,9 @@ function parseArgs(argv: string[]): CliConfig {
           break;
         case 'ua':
           raw.userAgent = value;
+          break;
+        case 'proxy':
+          raw.proxy = value;
           break;
         default:
           console.error("error: unknown key " + key);

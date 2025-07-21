@@ -209,31 +209,33 @@ By default, test requests are sent in parallel, if your API calls other APIs dur
 
 ### Testing multi-step flows
 
-Tests execute in parallel by default. The test case `postTest` function can be
-used to extract and save data from a test case, while `beforeSend` can be used
-to inject that data into subsequent requests. To ensure strict sequencing, set
-`rps` to `1` or insert explicit `delay` values.
+Tests execute in parallel by default. After each **successful** test, its
+response is saved under `state.completedCases[operationId].response`.  The
+`beforeSend` hook of a later test can read that data to craft the next request.
+To ensure strict sequencing, set `rps` to `1` or insert explicit `delay`
+values.
 
 
 ```js
 // auth.spectest.js
 
-let token;
-
 export default [
   {
     name: 'Login',
+    operationId: 'login',
     endpoint: '/login',
     request: {
       method: 'POST',
       body: { username: 'admin', password: 'secret' }
     },
-    postTest: async ({ json }) => { token = json.token; },
+    response: { status: 200 }
   },
   {
     name: 'Fetch profile',
+    dependsOn: ['login'],
     endpoint: '/profile',
-    beforeSend: req => {
+    beforeSend: (req, state) => {
+      const token = state.completedCases.login.response.data.token;
       req.headers = { ...req.headers, Authorization: `Bearer ${token}` };
     },
     response: { status: 200 }

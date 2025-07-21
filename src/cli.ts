@@ -18,6 +18,7 @@ const server = new Server();
 
 const testState = {
   sessionCookie: null,
+  completedCases: {} as Record<string, any>,
 };
 
 function setupEnvironment(cfg) {
@@ -482,6 +483,12 @@ async function runTests(tests, renderer, options = {}) {
     scheduled.add(test);
     return runTest(test).then((result) => {
       results.push(result);
+      if (result.passed) {
+        if (!testState.completedCases[result.operationId]) {
+          (testState.completedCases as any)[result.operationId] = {};
+        }
+        (testState.completedCases as any)[result.operationId].response = result.response;
+      }
       if (!result.passed) {
         test.dependents.forEach((d: any) => {
           if (!d.__runtimeSkip) {

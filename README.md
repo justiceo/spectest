@@ -149,6 +149,7 @@ That’s where Spectest was born—out of necessity.
 | ------ | ----------- | ------- |
 | `configFile` | Path to an extra config file | none |
 | `baseUrl` | Base URL of the API | `http://localhost:3000` |
+| `proxy` | Proxy server URL | none |
 | `testDir` | Directory containing test suites | `./test` |
 | `filePattern` | Regex for suite filenames | `\.spectest\.` |
 | `startCmd` | Command to start the test server | `npm run start` |

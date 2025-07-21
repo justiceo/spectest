@@ -52,4 +52,6 @@ export interface TestCase {
 export interface Suite {
   name: string;
   tests: TestCase[];
+  /** Path the suite was loaded from */
+  loadPath?: string;
 }

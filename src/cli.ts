@@ -1,5 +1,5 @@
 import Renderer from './renderer';
-import { readdir, writeFile, readFile } from 'fs/promises';
+import { writeFile, readFile } from 'fs/promises';
 import { existsSync, realpathSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,6 +10,7 @@ import { loadConfig } from './config';
 import Server from './server';
 import RateLimiter from './rate-limiter';
 import { resolveUserAgent } from './user-agents';
+import { resolveSuitePaths, loadSuites } from './loader';
 import type { Suite, TestCase } from "./types";
 
 function parseProxyUrl(url: string) {
@@ -57,67 +58,6 @@ function setupEnvironment(cfg) {
   rateLimiter = new RateLimiter(cfg.rps || Infinity);
 }
 
-async function discoverSuites(cfg): Promise<Suite[]> {
-  const projectRoot = cfg.projectRoot || process.cwd();
-
-  async function loadSuite(filePath: string): Promise<Suite> {
-    let tests: TestCase[] = [];
-    let name: string | undefined;
-
-    if (filePath.endsWith('.json')) {
-      const raw = await readFile(filePath, 'utf8');
-      const data = JSON.parse(raw);
-      if (Array.isArray(data)) {
-        tests = data;
-      } else if (data && Array.isArray(data.tests)) {
-        tests = data.tests;
-        if (typeof data.name === 'string') name = data.name;
-      }
-    } else {
-      const mod = await import(filePath);
-      const exported = mod.default || mod;
-
-      if (Array.isArray(exported)) {
-        tests = [...exported];
-      } else if (exported && typeof exported === 'object') {
-        if (Array.isArray((exported as any).tests)) {
-          tests = [...(exported as any).tests];
-        }
-        if (typeof (exported as any).name === 'string') {
-          name = (exported as any).name;
-        }
-      }
-    }
-
-
-    if (!name) {
-      const base = path.basename(filePath);
-      const parsed = path.parse(base);
-      name = parsed.name.replace(/\.spectest$/, '');
-    }
-
-    return { name, tests };
-  }
-
-  if (cfg.suiteFile) {
-    const suitePath = path.resolve(projectRoot, cfg.suiteFile);
-    const suite = await loadSuite(suitePath);
-    return [suite];
-  }
-
-  const testDir = path.resolve(projectRoot, cfg.testDir);
-  const files = await readdir(testDir);
-  const pattern = new RegExp(cfg.filePattern);
-  const suiteFiles = files.filter((f) => pattern.test(f)).sort();
-  const suites: Suite[] = [];
-  for (const file of suiteFiles) {
-    const suitePath = path.join(testDir, file);
-    // eslint-disable-next-line no-await-in-loop
-    const suite = await loadSuite(suitePath);
-    suites.push(suite);
-  }
-  return suites;
-}
 
 function validateWithSchema(data, schema) {
   if (typeof schema.safeParse !== 'function') {
@@ -543,7 +483,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   const progStart = Date.now();
   renderer.start(cfg.baseUrl);
 
-  const suites = await discoverSuites(cfg);
+  const suitePaths = await resolveSuitePaths(cfg);
+  const suites = await loadSuites(suitePaths);
   const tests: TestCase[] = suites.flatMap((suite) =>
     suite.tests.map((t) => ({ ...t, suiteName: suite.name }))
   );

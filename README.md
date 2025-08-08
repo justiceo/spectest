@@ -165,7 +165,7 @@ That’s where Spectest was born—out of necessity.
 | `verbose` | Verbose output with logs | `false` |
 | `userAgent` | Browser User-Agent string to send or one of the predefined [user-agents](https://github.com/justiceo/spectest/blob/main/src/user-agents.ts). | `chrome_windows` |
 | `suiteFile` | Run only the specified suite file | none |
-| `projectRoot` | Root directory of the project | current working directory |
+| `projectRoot` (`--dir`) | Root directory of the project | current working directory |
 
 
 ## API Testing Tips

@@ -96,6 +96,9 @@ function parseArgs(argv: string[]): CliConfig {
         case 'proxy':
           raw.proxy = value;
           break;
+        case 'dir':
+          raw.projectRoot = value;
+          break;
         default:
           console.error("error: unknown key " + key);
           process.exit(1)
@@ -116,7 +119,9 @@ function parseArgs(argv: string[]): CliConfig {
 
 export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   const cliOpts = parseArgs(argv);
-  const projectRoot = process.cwd();
+  const projectRoot = cliOpts.projectRoot
+    ? path.resolve(cliOpts.projectRoot)
+    : process.cwd();
   // first load default config.
   let cfg: CliConfig = { ...defaultConfig } as CliConfig;
 
@@ -132,12 +137,13 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
 
   // then load invocation-time project config.
   if (cliOpts.configFile) {
-    const mod = await import(path.resolve(cliOpts.configFile));
+    const mod = await import(path.resolve(projectRoot, cliOpts.configFile));
     cfg = { ...cfg, ...(mod.default || mod) };
   }
 
   // then apply cli options over the configs.
-  cfg = { ...cfg, ...cliOpts };
+  const { projectRoot: _unused, ...restCliOpts } = cliOpts;
+  cfg = { ...cfg, ...restCliOpts };
   cfg.projectRoot = projectRoot;
   cfg.runningServer = (cfg.runningServer as any) || 'reuse';
 

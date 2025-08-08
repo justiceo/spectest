@@ -1,5 +1,6 @@
 import { readdir, readFile } from 'fs/promises';
 import path from 'path';
+import { load as parseYaml } from 'js-yaml';
 import type { CliConfig } from './config';
 import type { Suite, TestCase } from './types';
 
@@ -29,6 +30,15 @@ async function loadSuite(filePath: string): Promise<Suite> {
       tests = data;
     } else if (data && Array.isArray(data.tests)) {
       tests = data.tests;
+      if (typeof data.name === 'string') name = data.name;
+    }
+  } else if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) {
+    const raw = await readFile(filePath, 'utf8');
+    const data: any = parseYaml(raw);
+    if (Array.isArray(data)) {
+      tests = data as any;
+    } else if (data && Array.isArray(data.tests)) {
+      tests = data.tests as any;
       if (typeof data.name === 'string') name = data.name;
     }
   } else {

@@ -5,6 +5,7 @@ class Server {
   private serverProcess: ReturnType<typeof spawn> | null = null;
   private startedByHelper = false;
   private serverLogs: Array<{ timestamp: string; type: 'stdout' | 'stderr'; message: string }> = [];
+  private buildCommand?: string;
   private startCommand = 'npm run start';
   private serverUrl = 'http://localhost:8080';
   private runningServer: 'reuse' | 'fail' | 'kill' = 'reuse';
@@ -17,12 +18,18 @@ class Server {
     if (url) this.serverUrl = url;
   }
 
+  setBuildCommand(cmd?: string): void {
+    if (cmd) this.buildCommand = cmd;
+  }
+
   setConfig(cfg: {
     startCommand?: string;
+    buildCmd?: string;
     serverUrl?: string;
     runningServer?: 'reuse' | 'fail' | 'kill';
   } = {}): void {
     if (cfg.startCommand) this.setStartCommand(cfg.startCommand);
+    if (cfg.buildCmd) this.setBuildCommand(cfg.buildCmd);
     if (cfg.serverUrl) this.setServerUrl(cfg.serverUrl);
     if (cfg.runningServer) this.runningServer = cfg.runningServer;
   }
@@ -117,16 +124,8 @@ class Server {
     }
 
     return new Promise((resolve, reject) => {
-      console.log('🏗️  Building server...');
-      const buildProcess = spawn('npm', ['run', 'build'], { stdio: 'pipe' });
-
-      buildProcess.on('close', (buildCode) => {
-        if (buildCode !== 0) {
-          reject(new Error(`Build failed with code ${buildCode}`));
-          return;
-        }
-
-        console.log('✅ Build completed, starting server...');
+      const startServer = () => {
+        console.log('✅ Starting server...');
         this.startedByHelper = true;
         const [cmd, ...args] = this.startCommand.split(' ');
         this.serverProcess = spawn(cmd, args, {
@@ -164,7 +163,24 @@ class Server {
             reject(new Error(`Server startup failed: ${error.message}`));
           }
         }, 3000);
-      });
+      };
+
+      if (this.buildCommand) {
+        console.log('🏗️  Building server...');
+        const [cmd, ...args] = this.buildCommand.split(' ');
+        const buildProcess = spawn(cmd, args, { stdio: 'pipe' });
+
+        buildProcess.on('close', (buildCode) => {
+          if (buildCode !== 0) {
+            reject(new Error(`Build failed with code ${buildCode}`));
+            return;
+          }
+          console.log('✅ Build completed, starting server...');
+          startServer();
+        });
+      } else {
+        startServer();
+      }
     });
   }
 

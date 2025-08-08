@@ -51,6 +51,7 @@ function setupEnvironment(cfg) {
 
   server.setConfig({
     startCommand: cfg.startCmd,
+    buildCmd: cfg.buildCmd,
     serverUrl: cfg.baseUrl,
     runningServer: cfg.runningServer,
   });

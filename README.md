@@ -153,6 +153,7 @@ That’s where Spectest was born—out of necessity.
 | `testDir` | Directory containing test suites | `./test` |
 | `filePattern` | Regex for suite filenames | `\.spectest\.` |
 | `startCmd` | Command to start the test server | `npm run start` |
+| `buildCmd` | Command to build the test server | none |
 | `runningServer` | Handling for an existing server (`reuse`, `fail`, or `kill`) | `reuse` |
 | `tags` | String list used for filtering tests | [] |
 | `rps` | Requests per second rate limit | Infinity |

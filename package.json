@@ -1,6 +1,6 @@
 {
   "name": "spectest",
-  "version": "1.0.5",
+  "version": "1.0.7",
   "description": "Declarative API testing that is fast and simple",
   "main": "dist/cli.js",
   "scripts": {
@@ -21,7 +21,7 @@
   "bugs": {
     "url": "https://github.com/justiceo/spectest/issues"
   },
-  "author": "Justice Ogbonna",
+  "author": "Justice Ogbonna <dev@justiceo.com>",
   "license": "MIT",
   "type": "module",
   "dependencies": {
@@ -36,7 +36,6 @@
     "./helpers": "./dist/helpers.js"
   },
   "devDependencies": {
-    "@types/node": "^24.0.12",
-    "typescript": "^5.4.5"
+    "@types/node": "^24.0.12"
   }
 }

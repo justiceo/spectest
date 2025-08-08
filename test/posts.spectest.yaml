@@ -1,0 +1,6 @@
+name: Posts Tests
+tests:
+  - name: List posts
+    endpoint: /posts/
+  - name: Get post 1
+    endpoint: /posts/1

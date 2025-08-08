@@ -8,6 +8,7 @@ export interface CliConfig {
   testDir?: string;
   filePattern?: string;
   startCmd?: string;
+  buildCmd?: string;
   runningServer?: string;
   tags?: string[];
   rps?: number;
@@ -55,6 +56,9 @@ function parseArgs(argv: string[]): CliConfig {
           break;
         case 'start-cmd':
           raw.startCmd = value;
+          break;
+        case 'build-cmd':
+          raw.buildCmd = value;
           break;
         case 'running-server':
           raw.runningServer = value;

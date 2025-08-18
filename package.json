@@ -1,6 +1,6 @@
 {
   "name": "spectest",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Declarative API testing that is fast and simple",
   "main": "dist/cli.js",
   "scripts": {
@@ -9,15 +9,18 @@
   },
   "keywords": [
     "api",
+    "tests",
     "testing",
     "declarative",
     "http-testing",
-    "api-testing"
+    "api-testing",
+    "cli"
   ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/justiceo/spectest.git"
   },
+  "homepage": "https://spectest.dev",
   "bugs": {
     "url": "https://github.com/justiceo/spectest/issues"
   },

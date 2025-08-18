@@ -362,7 +362,7 @@ And you can create your own helpers to reduce repetition of common request/respo
 
 ### Test formats
 
-Test cases can be written in `.js`, plain `.json` files, or `.mjs` for ESM and `.cjs` for CommonJs modules.
+Test cases can be written in `.js`, plain `.json` and `.yaml` files, or `.mjs` for ESM and `.cjs` for CommonJs modules.
 
 Typescript (`.ts`) files are not yet supported, you'd need to transpile them to any of the supported Js modules above.
 

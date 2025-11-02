@@ -65,9 +65,23 @@ function validateWithSchema(data, schema) {
     return { success: false, errors: ['response schema is not a valid zod schema'] };
   }
   const result = schema.safeParse(data);
+  const formatPath = (pathSegments: Array<string | number> | undefined) => {
+    if (!pathSegments || pathSegments.length === 0) {
+      return '';
+    }
+    const formatted = pathSegments.reduce((path, segment) => {
+      if (typeof segment === 'number') {
+        return `${path}[${segment}]`;
+      }
+      return path ? `${path}.${segment}` : segment;
+    }, '');
+    return formatted;
+  };
   return {
     success: result.success,
-    errors: result.success ? [] : result.error.issues.map((i) => i.message),
+    errors: result.success
+      ? []
+      : result.error.issues.map((issue) => `${formatPath(issue.path)}: ${issue.message}`),
   };
 }
 
@@ -215,7 +229,7 @@ async function runTest(test: TestCase) {
       const result = validateWithSchema(response.data, expectedResponse.schema);
       if (!result.success) {
         passed = false;
-        errors.push(`Schema validation failed: ${result.errors.join(', ')}`);
+        errors.push(`Schema validation failed: ${result.errors.join('; ')}`);
       }
     }
 

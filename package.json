@@ -1,10 +1,10 @@
 {
   "name": "spectest",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "Declarative API testing that is fast and simple",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "npx -y esbuild src/cli.ts src/helpers.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
+    "build": "npx -y esbuild src/cli.ts src/helpers.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
     "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com"
   },
   "keywords": [

@@ -54,4 +54,8 @@ export interface Suite {
   tests: TestCase[];
   /** Path the suite was loaded from */
   loadPath?: string;
+  /** Setup test cases */
+  setup?: TestCase[];
+  /** Teardown test cases */
+  teardown?: TestCase[];
 }

@@ -21,6 +21,8 @@ export async function resolveSuitePaths(cfg: CliConfig): Promise<string[]> {
 
 async function loadSuite(filePath: string): Promise<Suite> {
   let tests: TestCase[] = [];
+  let setup: TestCase[] = [];
+  let teardown: TestCase[] = [];
   let name: string | undefined;
 
   if (filePath.endsWith('.json')) {
@@ -31,6 +33,8 @@ async function loadSuite(filePath: string): Promise<Suite> {
     } else if (data && Array.isArray(data.tests)) {
       tests = data.tests;
       if (typeof data.name === 'string') name = data.name;
+      if (Array.isArray(data.setup)) setup = data.setup;
+      if (Array.isArray(data.teardown)) teardown = data.teardown;
     }
   } else if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) {
     const raw = await readFile(filePath, 'utf8');
@@ -40,6 +44,8 @@ async function loadSuite(filePath: string): Promise<Suite> {
     } else if (data && Array.isArray(data.tests)) {
       tests = data.tests as any;
       if (typeof data.name === 'string') name = data.name;
+      if (Array.isArray(data.setup)) setup = data.setup;
+      if (Array.isArray(data.teardown)) teardown = data.teardown;
     }
   } else {
     const mod = await import(filePath);
@@ -49,6 +55,12 @@ async function loadSuite(filePath: string): Promise<Suite> {
     } else if (exported && typeof exported === 'object') {
       if (Array.isArray((exported as any).tests)) {
         tests = [...(exported as any).tests];
+      }
+      if (Array.isArray((exported as any).setup)) {
+        setup = [...(exported as any).setup];
+      }
+      if (Array.isArray((exported as any).teardown)) {
+        teardown = [...(exported as any).teardown];
       }
       if (typeof (exported as any).name === 'string') {
         name = (exported as any).name;
@@ -62,7 +74,7 @@ async function loadSuite(filePath: string): Promise<Suite> {
     name = parsed.name.replace(/\.spectest$/, '');
   }
 
-  return { name, tests, loadPath: filePath };
+  return { name, tests, setup, teardown, loadPath: filePath };
 }
 
 export async function loadSuites(paths: string[]): Promise<Suite[]> {

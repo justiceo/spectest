@@ -493,6 +493,22 @@ async function runTests(tests: TestCase[], renderer, options = {}) {
   return { results, skippedTests: [...skippedTests, ...skipped] };
 }
 
+async function runTestCollection(
+  collection: TestCase[],
+  renderer: Renderer,
+  options: any,
+  collectionName: string
+) {
+  if (collection.length === 0) {
+    return { passed: true, results: [], skipped: [] };
+  }
+
+  console.log(`📋 Running ${collectionName} tests...`);
+  const { results, skippedTests } = await runTests(collection, renderer, options);
+  const passed = results.every((r) => r.passed);
+  return { passed, results, skipped: skippedTests };
+}
+
 async function runAllTests(cfg, verbose = false, tags = []) {
   const renderer = new Renderer({ verbose });
   const progStart = Date.now();
@@ -500,17 +516,24 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 
   const suitePaths = await resolveSuitePaths(cfg);
   const suites = await loadSuites(suitePaths);
+
+  const setupTests: TestCase[] = suites.flatMap(
+    (suite) => suite.setup?.map((t) => ({ ...t, suiteName: suite.name })) || []
+  );
   const tests: TestCase[] = suites.flatMap((suite) =>
     suite.tests.map((t) => ({ ...t, suiteName: suite.name }))
   );
+  const teardownTests: TestCase[] = suites.flatMap(
+    (suite) => suite.teardown?.map((t) => ({ ...t, suiteName: suite.name })) || []
+  );
 
-  tests.forEach((t) => {
+  [...setupTests, ...tests, ...teardownTests].forEach((t) => {
     if (!t.operationId) t.operationId = t.name;
   });
 
-  validateTests(tests);
+  validateTests([...setupTests, ...tests, ...teardownTests]);
 
-  // TODO: Do not proceed if tests array is empty.
+  // TODO: Do not proceed if all test arrays are empty.
 
   try {
     await server.start();
@@ -519,24 +542,40 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     process.exit(1);
   }
 
-  console.log('📋 Running tests...');
   const testStart = Date.now();
-  const { results: testResults, skippedTests } = await runTests(tests, renderer, {
+  const runOptions = {
     tags,
     randomize: cfg.randomize,
     happy: cfg.happy,
     filter: cfg.filter,
-    snapshotFile: cfg.snapshotFile
-  });
+    snapshotFile: cfg.snapshotFile,
+  };
+
+  const setupResult = await runTestCollection(setupTests, renderer, runOptions, 'setup');
+  let testResults: any[] = [];
+  let skippedTests: any[] = [];
+  let teardownResult = { passed: true, results: [], skipped: [] };
+
+  if (setupResult.passed) {
+    const testRun = await runTestCollection(tests, renderer, runOptions, 'main');
+    testResults = testRun.results;
+    skippedTests = testRun.skipped;
+    teardownResult = await runTestCollection(teardownTests, renderer, runOptions, 'teardown');
+  } else {
+    console.log('Skipping main tests due to setup failure.');
+  }
+
+  const allResults = [...setupResult.results, ...testResults, ...teardownResult.results];
   const totalTestTime = Date.now() - testStart;
-  const passed = testResults.filter((r) => r.passed).length;
-  const total = testResults.length;
+  const passedCount = allResults.filter((r) => r.passed).length;
+  const totalCount = allResults.length;
+
   console.log('='.repeat(50));
-  console.log(`✨ Tests completed: ${passed}/${total} passed`);
+  console.log(`✨ Tests completed: ${passedCount}/${totalCount} passed`);
   renderer.showSkippedTests(skippedTests);
 
   const serverLogs = server.getLogs();
-  const resultsBySuite = testResults.reduce((acc: any, r: any) => {
+  const resultsBySuite = allResults.reduce((acc: any, r: any) => {
     const s = r.suiteName || 'unknown';
     if (!acc[s]) acc[s] = [];
     acc[s].push(r);
@@ -544,10 +583,10 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }, {} as Record<string, any[]>);
 
   renderer.showResults(resultsBySuite, serverLogs);
-  renderer.showLatency(testResults);
-  
+  renderer.showLatency(allResults);
+
   if (cfg.snapshotFile) {
-    const snapshotCases = testResults.map((r) => ({
+    const snapshotCases = allResults.map((r) => ({
       name: r.testName,
       operationId: r.operationId,
       suite: r.suiteName,
@@ -604,8 +643,9 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   const totalTime = Date.now() - progStart;
-  renderer.finalStats(passed, total, totalTestTime, totalTime);
-  process.exit(passed === total ? 0 : 1);
+  renderer.finalStats(passedCount, totalCount, totalTestTime, totalTime);
+  const finalExitCode = setupResult.passed && passedCount === totalCount ? 0 : 1;
+  process.exit(finalExitCode);
 }
 
 if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1]))  {

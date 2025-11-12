@@ -493,22 +493,6 @@ async function runTests(tests: TestCase[], renderer, options = {}) {
   return { results, skippedTests: [...skippedTests, ...skipped] };
 }
 
-async function runTestCollection(
-  collection: TestCase[],
-  renderer: Renderer,
-  options: any,
-  collectionName: string
-) {
-  if (collection.length === 0) {
-    return { passed: true, results: [], skipped: [] };
-  }
-
-  console.log(`📋 Running ${collectionName} tests...`);
-  const { results, skippedTests } = await runTests(collection, renderer, options);
-  const passed = results.every((r) => r.passed);
-  return { passed, results, skipped: skippedTests };
-}
-
 async function runAllTests(cfg, verbose = false, tags = []) {
   const renderer = new Renderer({ verbose });
   const progStart = Date.now();
@@ -517,21 +501,30 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   const suitePaths = await resolveSuitePaths(cfg);
   const suites = await loadSuites(suitePaths);
 
-  const setupTests: TestCase[] = suites.flatMap(
-    (suite) => suite.setup?.map((t) => ({ ...t, suiteName: suite.name })) || []
-  );
-  const tests: TestCase[] = suites.flatMap((suite) =>
-    suite.tests.map((t) => ({ ...t, suiteName: suite.name }))
-  );
-  const teardownTests: TestCase[] = suites.flatMap(
-    (suite) => suite.teardown?.map((t) => ({ ...t, suiteName: suite.name })) || []
-  );
+  const allTests: TestCase[] = [];
+  suites.forEach((suite) => {
+    const setupTests = suite.setup?.map((t) => ({ ...t, suiteName: suite.name })) || [];
+    const tests = suite.tests.map((t) => ({ ...t, suiteName: suite.name }));
+    const teardownTests = suite.teardown?.map((t) => ({ ...t, suiteName: suite.name })) || [];
 
-  [...setupTests, ...tests, ...teardownTests].forEach((t) => {
-    if (!t.operationId) t.operationId = t.name;
+    [...setupTests, ...tests, ...teardownTests].forEach((t) => {
+      if (!t.operationId) t.operationId = t.name;
+    });
+
+    const setupOpIds = setupTests.map((t) => t.operationId);
+    tests.forEach((t) => {
+      t.dependsOn = [...(t.dependsOn || []), ...setupOpIds];
+    });
+
+    const testOpIds = tests.map((t) => t.operationId);
+    teardownTests.forEach((t) => {
+      t.dependsOn = [...(t.dependsOn || []), ...testOpIds];
+    });
+
+    allTests.push(...setupTests, ...tests, ...teardownTests);
   });
 
-  validateTests([...setupTests, ...tests, ...teardownTests]);
+  validateTests(allTests);
 
   // TODO: Do not proceed if all test arrays are empty.
 
@@ -542,40 +535,24 @@ async function runAllTests(cfg, verbose = false, tags = []) {
     process.exit(1);
   }
 
+  console.log('📋 Running tests...');
   const testStart = Date.now();
-  const runOptions = {
+  const { results: testResults, skippedTests } = await runTests(allTests, renderer, {
     tags,
     randomize: cfg.randomize,
     happy: cfg.happy,
     filter: cfg.filter,
     snapshotFile: cfg.snapshotFile,
-  };
-
-  const setupResult = await runTestCollection(setupTests, renderer, runOptions, 'setup');
-  let testResults: any[] = [];
-  let skippedTests: any[] = [];
-  let teardownResult = { passed: true, results: [], skipped: [] };
-
-  if (setupResult.passed) {
-    const testRun = await runTestCollection(tests, renderer, runOptions, 'main');
-    testResults = testRun.results;
-    skippedTests = testRun.skipped;
-    teardownResult = await runTestCollection(teardownTests, renderer, runOptions, 'teardown');
-  } else {
-    console.log('Skipping main tests due to setup failure.');
-  }
-
-  const allResults = [...setupResult.results, ...testResults, ...teardownResult.results];
+  });
   const totalTestTime = Date.now() - testStart;
-  const passedCount = allResults.filter((r) => r.passed).length;
-  const totalCount = allResults.length;
-
+  const passed = testResults.filter((r) => r.passed).length;
+  const total = testResults.length;
   console.log('='.repeat(50));
-  console.log(`✨ Tests completed: ${passedCount}/${totalCount} passed`);
+  console.log(`✨ Tests completed: ${passed}/${total} passed`);
   renderer.showSkippedTests(skippedTests);
 
   const serverLogs = server.getLogs();
-  const resultsBySuite = allResults.reduce((acc: any, r: any) => {
+  const resultsBySuite = testResults.reduce((acc: any, r: any) => {
     const s = r.suiteName || 'unknown';
     if (!acc[s]) acc[s] = [];
     acc[s].push(r);
@@ -583,10 +560,10 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }, {} as Record<string, any[]>);
 
   renderer.showResults(resultsBySuite, serverLogs);
-  renderer.showLatency(allResults);
+  renderer.showLatency(testResults);
 
   if (cfg.snapshotFile) {
-    const snapshotCases = allResults.map((r) => ({
+    const snapshotCases = testResults.map((r) => ({
       name: r.testName,
       operationId: r.operationId,
       suite: r.suiteName,
@@ -643,9 +620,8 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   }
 
   const totalTime = Date.now() - progStart;
-  renderer.finalStats(passedCount, totalCount, totalTestTime, totalTime);
-  const finalExitCode = setupResult.passed && passedCount === totalCount ? 0 : 1;
-  process.exit(finalExitCode);
+  renderer.finalStats(passed, total, totalTestTime, totalTime);
+  process.exit(passed === total ? 0 : 1);
 }
 
 if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1]))  {

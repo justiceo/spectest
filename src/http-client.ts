@@ -27,15 +27,18 @@ export class HttpClient {
 
   public async request(options: any): Promise<any> {
     const url = new URL(options.url, this.baseURL);
-    const body =
-      typeof options.data === 'object'
-        ? JSON.stringify(options.data)
-        : options.data;
+    const requestHeaders: Record<string, string> = { ...this.headers, ...options.headers };
+    let requestBody = options.data;
+
+    if (typeof options.data === 'object' && options.data !== null) {
+      requestBody = JSON.stringify(options.data);
+      requestHeaders['Content-Type'] = 'application/json';
+    }
 
     const initialRequest = new Request(url.toString(), {
       method: options.method,
-      headers: { ...this.headers, ...options.headers },
-      body,
+      headers: requestHeaders,
+      body: requestBody,
     });
 
     const transformedRequest = await this.pluginHost.transformRequest(

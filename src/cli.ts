@@ -187,7 +187,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
     await rateLimiter.acquire();
     const response = await api.request({ ...config, timeout: testTimeout });
 
-    const [sessionCookie] = response.headers['set-cookie'] || [];
+    const sessionCookie = response.headers.get('set-cookie') ?? "";
     if (sessionCookie) {
       testState.sessionCookie = sessionCookie;
     }
@@ -214,11 +214,12 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
 
     if (expectedResponse.headers && Object.keys(expectedResponse.headers).length > 0) {
       Object.entries(expectedResponse.headers).forEach(([headerName, expectedValue]) => {
-        const actualValue = response.headers[headerName.toLowerCase()];
+        const actualValue = response.headers.get(headerName.toLowerCase());
         if (expectedValue === true) {
           if (typeof actualValue === 'undefined') {
             errors.push(`Header '${headerName}' not found`);
             passed = false;
+            console.log("headers " + JSON.stringify(Object.fromEntries(response.headers)));
           }
         } else if (actualValue !== expectedValue) {
           errors.push(`Header '${headerName}' mismatch: expected '${expectedValue}', got '${actualValue}'`);

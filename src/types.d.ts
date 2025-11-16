@@ -82,4 +82,11 @@ export interface TestResult {
 export interface TestRunResult {
   results: TestResult[];
   skippedTests: TestCase[];
+  serverLogs: ServerLog[];
+}
+
+export interface ServerLog {
+  timestamp: string;
+  message: string;
+  type: 'stdout' | 'stderr';
 }

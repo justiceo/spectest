@@ -52,7 +52,13 @@ export class HttpClient {
         signal: controller.signal,
       });
 
-      const data = await response.json().catch(() => response.text());
+      const text = await response.text();
+      let data;
+      try {
+        data = text ? JSON.parse(text) : null;
+      } catch (e) {
+        data = text;
+      }
 
       return {
         status: response.status,

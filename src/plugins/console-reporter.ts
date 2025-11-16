@@ -51,7 +51,7 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
     ctx.onRunEnd((runResult) => {
       process.stdout.write('\n'); // Clear progress bar line
 
-      const { results, skippedTests } = runResult;
+      const { results, skippedTests, serverLogs } = runResult;
       const passed = results.filter((r) => r.passed).length;
       const total = results.length;
 
@@ -71,7 +71,24 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
           const icon = result.timedOut ? '⏰' : result.passed ? '✅' : '❌';
           console.log(`  [${icon}] ${result.testName} (${result.latency}ms)`);
           if (!result.passed) {
-            console.log(red(`    Test failure reason: ${result.error}`));
+            const requestLogs = result.requestId
+              ? serverLogs.filter((log) => log.message.includes(result.requestId!))
+              : [];
+            if (requestLogs.length > 0) {
+              requestLogs.forEach((entry) => {
+                const message =
+                  entry.type === 'stderr'
+                    ? red(`    ${entry.timestamp}: ${entry.message}`)
+                    : `    ${entry.timestamp}: ${entry.message}`;
+                console.log(message);
+              });
+            } else if (result.requestId) {
+              console.log(`    No server logs found for request ID: ${result.requestId}`);
+            }
+
+            if (result.error) {
+              console.log(red(`    Test failure reason: ${result.error}`));
+            }
           }
         });
       });

@@ -139,7 +139,7 @@ async function runAllTests(cfg: any) {
   await server.stop();
   rateLimiter.stop();
 
-  await host.dispatchRunEnd({ results, skippedTests: Array.from(runtimeSkipped) });
+  await host.dispatchRunEnd({ results, skippedTests: Array.from(runtimeSkipped), serverLogs: server.getLogs() });
 
   const passed = results.every((r) => r.passed);
   process.exit(passed ? 0 : 1);
@@ -169,6 +169,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
     let config = {
       method: test.request?.method || 'GET',
       url: test.endpoint,
+      // todo: rename data to body.
       data: test.request?.body,
       headers: {...test.request?.headers},
     };
@@ -207,6 +208,56 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       passed = false;
     }
 
+    if (expectedResponse.status === 200 && !expectedResponse.json?.message && response.data.message) {
+      errors.push(`⚠️ Unexpected status message: ${response.data.message}`);
+    }
+
+    if (expectedResponse.headers && Object.keys(expectedResponse.headers).length > 0) {
+      Object.entries(expectedResponse.headers).forEach(([headerName, expectedValue]) => {
+        const actualValue = response.headers[headerName.toLowerCase()];
+        if (expectedValue === true) {
+          if (typeof actualValue === 'undefined') {
+            errors.push(`Header '${headerName}' not found`);
+            passed = false;
+          }
+        } else if (actualValue !== expectedValue) {
+          errors.push(`Header '${headerName}' mismatch: expected '${expectedValue}', got '${actualValue}'`);
+          passed = false;
+        }
+      });
+    }
+
+    if (expectedResponse.json && Object.keys(expectedResponse.json).length > 0) {
+      Object.entries(expectedResponse.json).forEach(([key, expectedValue]) => {
+        const actualValue = response.data?.[key];
+        if (typeof expectedValue === 'object' && expectedValue !== null) {
+          if (JSON.stringify(actualValue) !== JSON.stringify(expectedValue)) {
+            errors.push(
+              `Data property '${key}' mismatch: expected ${JSON.stringify(
+                expectedValue
+              )}, got ${JSON.stringify(actualValue)}`
+            );
+            passed = false;
+          }
+        } else if (actualValue !== expectedValue) {
+          errors.push(
+            `Data property '${key}' mismatch: expected ${JSON.stringify(
+              expectedValue
+            )}, got ${JSON.stringify(actualValue)}`
+          );
+          passed = false;
+        }
+      });
+    }
+
+    if (expectedResponse.schema) {
+      const result = validateWithSchema(response.data, expectedResponse.schema);
+      if (!result.success) {
+        passed = false;
+        errors.push(`Schema validation failed: ${result.errors.join(', ')}`);
+      }
+    }
+
     const latency = Date.now() - startTime;
     return {
       passed,
@@ -243,6 +294,17 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       }
     };
   }
+}
+
+function validateWithSchema(data, schema) {
+  if (typeof schema.safeParse !== 'function') {
+    return { success: false, errors: ['response schema is not a valid zod schema'] };
+  }
+  const result = schema.safeParse(data);
+  return {
+    success: result.success,
+    errors: result.success ? [] : result.error.issues.map((i) => i.message),
+  };
 }
 
 

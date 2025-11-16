@@ -1,5 +1,5 @@
-import axios from 'axios';
 import { spawn, spawnSync } from 'child_process';
+import { httpRequest } from './http-client';
 
 class Server {
   private serverProcess: ReturnType<typeof spawn> | null = null;
@@ -95,11 +95,10 @@ class Server {
 
   async isRunning(): Promise<boolean> {
     try {
-      const response = await axios.request({
+      const response = await httpRequest({
         method: 'HEAD',
         url: this.serverUrl,
         timeout: 3000,
-        validateStatus: () => true,
       });
       return response.status >= 200 && response.status < 500;
     } catch {

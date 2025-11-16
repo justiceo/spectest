@@ -4,7 +4,7 @@ import { existsSync, realpathSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import axios from 'axios';
+import { HttpClient } from './http-client';
 
 import { loadConfig } from './config';
 import Server from './server';
@@ -41,13 +41,12 @@ const testState = {
 };
 
 function setupEnvironment(cfg) {
-  api = axios.create({
+  api = new HttpClient({
     baseURL: cfg.baseUrl,
     timeout: cfg.timeout || 30000,
-    validateStatus: () => true,
     ...(cfg.proxy ? { proxy: parseProxyUrl(cfg.proxy) } : {}),
   });
-  api.defaults.headers.common['User-Agent'] = resolveUserAgent(cfg.userAgent);
+  api.setHeader('User-Agent', resolveUserAgent(cfg.userAgent));
 
   server.setConfig({
     startCommand: cfg.startCmd,
@@ -138,7 +137,7 @@ async function runTest(test: TestCase) {
   const testTimeout =
     typeof test.timeout === 'number' && !Number.isNaN(test.timeout)
       ? test.timeout
-      : api.defaults.timeout;
+      : api.getTimeout();
   try {
     let config = {
       method: test.request?.method || 'GET',
@@ -160,7 +159,7 @@ async function runTest(test: TestCase) {
     if (rateLimiter) {
       await rateLimiter.acquire();
     }
-    const response = await api({ ...config, timeout: testTimeout });
+    const response = await api.request({ ...config, timeout: testTimeout });
 
     const [sessionCookie] = response.headers['set-cookie'] || [];
     if (sessionCookie) {
@@ -261,14 +260,6 @@ async function runTest(test: TestCase) {
       operationId: test.operationId,
       suiteName: test.suiteName,
       timedOut: isTimeout,
-      request: error.config || undefined,
-      response: error.response
-        ? {
-            status: error.response.status,
-            headers: error.response.headers,
-            data: error.response.data,
-          }
-        : undefined,
     };
   }
 }

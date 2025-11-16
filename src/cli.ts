@@ -99,7 +99,7 @@ async function runAllTests(cfg: any) {
 
   const scheduled = new Set<any>();
   async function schedule(test: TestCase): Promise<void> {
-    if (scheduled.has(test) || (test as any).__runtimeSkip) return;
+    if (test.skip || scheduled.has(test) || (test as any).__runtimeSkip) return;
     scheduled.add(test);
 
     await host.dispatchTestStart(test);

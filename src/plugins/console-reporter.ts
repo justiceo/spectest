@@ -111,8 +111,12 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
         });
       }
 
+      const runtimeSkipped = totalTests - results.length - skippedTests.length;
+      const totalSkipped = skippedTests.length + runtimeSkipped;
+
       console.log('\n' + '='.repeat(50));
-      console.log(`✨ Tests completed: ${passed}/${total} passed`);
+      const totalTestTime = Date.now() - testStartTime;
+      console.log(`✨ Tests completed: ${passed}/${total} passed, ${totalSkipped} skipped in ${(totalTestTime / 1000).toFixed(2)}s`);
 
       if (results.length > 0) {
         const latencies = results.map((r) => r.latency).sort((a, b) => a - b);
@@ -121,9 +125,6 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
         const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
         console.log(`⏱️  Latency: min ${min}ms; avg ${Number(avg.toFixed(2))}ms; max ${max}ms`);
       }
-
-      const totalTestTime = Date.now() - testStartTime;
-      console.log(`⏱️  Testing time: ${(totalTestTime / 1000).toFixed(2)}s`);
     });
   },
 });

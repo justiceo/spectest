@@ -122,6 +122,7 @@ That’s where Spectest was born—out of necessity.
 | ------ | ----------- | ------- |
 | `name` | Human readable test name | required |
 | `operationId` | Unique identifier for the operation | `name` |
+| `phase` | Execution phase of the test (`setup`, `main`, or `teardown`) | `main` |
 | `dependsOn` | Array of `operationId` strings that must pass before this test runs | none |
 | `endpoint` | Request path relative to the base URL | required |
 | `request.method` | HTTP method | `GET` |
@@ -170,11 +171,69 @@ That’s where Spectest was born—out of necessity.
 
 ## API Testing Tips
 
+### Setup and Teardown
+
+For tests that need to run before all others (e.g., checking server status) or after all others (e.g., logging out), you can use the `phase` property. The `phase` can be set to `setup`, `main` (default), or `teardown`.
+
+This is syntactic sugar for `dependsOn`, ensuring that `setup` tests block `main` and `teardown` tests, and `main` tests block `teardown` tests.
+
+```js
+export default [
+  {
+    name: 'Ping Server',
+    endpoint: '/ping',
+    response: { status: 200 },
+    phase: 'setup',
+  },
+  {
+    name: 'Main Test',
+    endpoint: '/some-data',
+    response: { status: 200 },
+  },
+  {
+    name: 'Logout',
+    endpoint: '/logout',
+    response: { status: 200 },
+    phase: 'teardown',
+  },
+];
+```
+
+Alternatively, you can structure your suite with `setup`, `tests`, and `teardown` properties:
+
+```js
+export default {
+  name: 'My Suite',
+  setup: [
+    {
+      name: 'Ping Server',
+      endpoint: '/ping',
+      response: { status: 200 },
+    },
+  ],
+  tests: [
+    {
+      name: 'Main Test',
+      endpoint: '/some-data',
+      response: { status: 200 },
+    },
+  ],
+  teardown: [
+    {
+      name: 'Logout',
+      endpoint: '/logout',
+      response: { status: 200 },
+    },
+  ],
+};
+```
+
 ### Making dynamic assertions
 
 The responses from APIs are often dynamic, however we often know their structure. For example, expecting an API to return a timestamp but unable to assert on a timestamp without mocking. For these cases, use **[Zod](https://zod.dev/) schema** to describe the shape and properties of the data expected in the response.
 
 The second example response above could have been written as:
+
 
 ```js
 import { z } from 'zod';

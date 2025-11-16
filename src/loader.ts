@@ -22,24 +22,30 @@ export async function resolveSuitePaths(cfg: CliConfig): Promise<string[]> {
 async function loadSuite(filePath: string): Promise<Suite> {
   let tests: TestCase[] = [];
   let name: string | undefined;
+  let setup: TestCase[] = [];
+  let teardown: TestCase[] = [];
 
   if (filePath.endsWith('.json')) {
     const raw = await readFile(filePath, 'utf8');
     const data = JSON.parse(raw);
     if (Array.isArray(data)) {
       tests = data;
-    } else if (data && Array.isArray(data.tests)) {
-      tests = data.tests;
+    } else if (data) {
+      if (Array.isArray(data.tests)) tests = data.tests;
       if (typeof data.name === 'string') name = data.name;
+      if (Array.isArray(data.setup)) setup = data.setup;
+      if (Array.isArray(data.teardown)) teardown = data.teardown;
     }
   } else if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) {
     const raw = await readFile(filePath, 'utf8');
     const data: any = parseYaml(raw);
     if (Array.isArray(data)) {
       tests = data as any;
-    } else if (data && Array.isArray(data.tests)) {
-      tests = data.tests as any;
+    } else if (data) {
+      if (Array.isArray(data.tests)) tests = data.tests as any;
       if (typeof data.name === 'string') name = data.name;
+      if (Array.isArray(data.setup)) setup = data.setup;
+      if (Array.isArray(data.teardown)) teardown = data.teardown;
     }
   } else {
     const mod = await import(filePath);
@@ -53,6 +59,12 @@ async function loadSuite(filePath: string): Promise<Suite> {
       if (typeof (exported as any).name === 'string') {
         name = (exported as any).name;
       }
+      if (Array.isArray((exported as any).setup)) {
+        setup = (exported as any).setup;
+      }
+      if (Array.isArray((exported as any).teardown)) {
+        teardown = (exported as any).teardown;
+      }
     }
   }
 
@@ -62,7 +74,13 @@ async function loadSuite(filePath: string): Promise<Suite> {
     name = parsed.name.replace(/\.spectest$/, '');
   }
 
-  return { name, tests, loadPath: filePath };
+  const allTests = [
+    ...setup.map((t) => ({ ...t, phase: 'setup' as const })),
+    ...tests,
+    ...teardown.map((t) => ({ ...t, phase: 'teardown' as const })),
+  ];
+
+  return { name, tests: allTests, loadPath: filePath };
 }
 
 export async function loadSuites(paths: string[]): Promise<Suite[]> {

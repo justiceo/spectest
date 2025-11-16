@@ -23,6 +23,8 @@ export interface TestCase {
   tags?: string | string[];
   /** Test dependencies */
   dependsOn?: string[];
+  /** Execution phase */
+  phase?: 'setup' | 'main' | 'teardown';
   /** Request options */
   request?: CaseRequest;
   /** Expected response assertions */
@@ -54,4 +56,8 @@ export interface Suite {
   tests: TestCase[];
   /** Path the suite was loaded from */
   loadPath?: string;
+  /** Setup tests */
+  setup?: TestCase[];
+  /** Teardown tests */
+  teardown?: TestCase[];
 }

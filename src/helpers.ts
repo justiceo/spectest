@@ -46,6 +46,20 @@ function skip(tests) {
   });
 }
 
+function setup(tests) {
+  return tests.map(test => {
+    test.phase = 'setup';
+    return test
+  })
+}
+
+function teardown(tests) {
+  return tests.map(test => {
+    test.phase = 'setup';
+    return test
+  })
+}
+
 export {
   composeBeforeSend,
   composePostTest,
@@ -54,4 +68,6 @@ export {
   repeat,
   bombard,
   skip,
+  setup,
+  teardown,
 };

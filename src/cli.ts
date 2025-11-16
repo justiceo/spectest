@@ -392,6 +392,25 @@ function shuffle(arr) {
   }
 }
 
+function prepareTests(tests: TestCase[]) {
+  const setupTests = tests.filter((t) => t.phase === 'setup');
+  const mainTests = tests.filter((t) => !t.phase || t.phase === 'main');
+  const teardownTests = tests.filter((t) => t.phase === 'teardown');
+
+  const setupIds = setupTests.map((t) => t.operationId);
+  const mainIds = mainTests.map((t) => t.operationId);
+
+  mainTests.forEach((t) => {
+    t.dependsOn = [...new Set([...(t.dependsOn || []), ...setupIds])];
+  });
+
+  teardownTests.forEach((t) => {
+    t.dependsOn = [...new Set([...(t.dependsOn || []), ...setupIds, ...mainIds])];
+  });
+
+  return [...setupTests, ...mainTests, ...teardownTests];
+}
+
 async function runTests(tests: TestCase[], renderer, options = {}) {
   const { tags, randomize, happy, filter, snapshotFile } = options;
   const expanded = expandRepeats(tests);
@@ -419,7 +438,7 @@ async function runTests(tests: TestCase[], renderer, options = {}) {
     ...happyResult.filtered.filter((t) => t.skip),
   ];
 
-  let runnableTests = [...filtered];
+  let runnableTests = prepareTests(filtered);
   if (randomize) {
     shuffle(runnableTests);
   }
@@ -501,7 +520,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
   const suitePaths = await resolveSuitePaths(cfg);
   const suites = await loadSuites(suitePaths);
   const tests: TestCase[] = suites.flatMap((suite) =>
-    suite.tests.map((t) => ({ ...t, suiteName: suite.name }))
+    suite.tests.map((t) => ({ ...t, suiteName: suite.name, phase: t.phase }))
   );
 
   tests.forEach((t) => {

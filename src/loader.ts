@@ -2,6 +2,7 @@ import { readdir, readFile } from 'fs/promises';
 import path from 'path';
 import { load as parseYaml } from 'js-yaml';
 import type { CliConfig } from './config';
+import type { PluginManager } from './plugin-manager';
 import type { Suite, TestCase } from './types';
 
 export async function resolveSuitePaths(cfg: CliConfig): Promise<string[]> {
@@ -19,7 +20,19 @@ export async function resolveSuitePaths(cfg: CliConfig): Promise<string[]> {
     .map((f) => path.join(testDir, f));
 }
 
-async function loadSuite(filePath: string): Promise<Suite> {
+async function loadSuite(filePath: string, pluginManager: PluginManager): Promise<Suite> {
+  const pluginResult = await pluginManager.runOnLoadCallbacks(filePath);
+  if (pluginResult) {
+    if (Array.isArray(pluginResult)) {
+      const base = path.basename(filePath);
+      const parsed = path.parse(base);
+      const name = parsed.name.replace(/\.spectest$/, '');
+      return { name, tests: pluginResult, loadPath: filePath };
+    } else {
+      return pluginResult;
+    }
+  }
+
   let tests: TestCase[] = [];
   let name: string | undefined;
   let setup: TestCase[] = [];
@@ -32,17 +45,6 @@ async function loadSuite(filePath: string): Promise<Suite> {
       tests = data;
     } else if (data) {
       if (Array.isArray(data.tests)) tests = data.tests;
-      if (typeof data.name === 'string') name = data.name;
-      if (Array.isArray(data.setup)) setup = data.setup;
-      if (Array.isArray(data.teardown)) teardown = data.teardown;
-    }
-  } else if (filePath.endsWith('.yaml') || filePath.endsWith('.yml')) {
-    const raw = await readFile(filePath, 'utf8');
-    const data: any = parseYaml(raw);
-    if (Array.isArray(data)) {
-      tests = data as any;
-    } else if (data) {
-      if (Array.isArray(data.tests)) tests = data.tests as any;
       if (typeof data.name === 'string') name = data.name;
       if (Array.isArray(data.setup)) setup = data.setup;
       if (Array.isArray(data.teardown)) teardown = data.teardown;
@@ -83,11 +85,11 @@ async function loadSuite(filePath: string): Promise<Suite> {
   return { name, tests: allTests, loadPath: filePath };
 }
 
-export async function loadSuites(paths: string[]): Promise<Suite[]> {
+export async function loadSuites(paths: string[], pluginManager: PluginManager): Promise<Suite[]> {
   const suites: Suite[] = [];
   for (const p of paths) {
     // eslint-disable-next-line no-await-in-loop
-    const suite = await loadSuite(p);
+    const suite = await loadSuite(p, pluginManager);
     suites.push(suite);
   }
   return suites;

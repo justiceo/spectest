@@ -63,7 +63,7 @@ async function loadSuite(filePath: string): Promise<Suite> {
     ...setup.map((t) => ({ ...t, phase: 'setup' as const })),
     ...tests,
     ...teardown.map((t) => ({ ...t, phase: 'teardown' as const })),
-  ];
+  ].map((t) => ({ ...t, suiteName: name }));
 
   return { name, tests: allTests, loadPath: filePath };
 }

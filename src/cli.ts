@@ -59,7 +59,7 @@ async function runAllTests(cfg: any) {
   }
 
   suites = await host.prepareSuites(suites);
-  const tests = suites.flatMap((s) => s.tests.map(t => ({...t, suiteName: s.name})));
+  const tests = suites.flatMap((s) => s.tests);
 
   try {
     await server.start();

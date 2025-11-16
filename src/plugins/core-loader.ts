@@ -1,23 +1,8 @@
-import { readdir, readFile } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import path from 'path';
 import { load as parseYaml } from 'js-yaml';
-import type { CliConfig } from './config';
-import type { Suite, TestCase } from './types';
-
-export async function resolveSuitePaths(cfg: CliConfig): Promise<string[]> {
-  const projectRoot = cfg.projectRoot || process.cwd();
-  if (cfg.suiteFile) {
-    return [path.resolve(projectRoot, cfg.suiteFile)];
-  }
-
-  const testDir = path.resolve(projectRoot, cfg.testDir || './test');
-  const files = await readdir(testDir);
-  const pattern = new RegExp(cfg.filePattern || '\\.(suite|spectest)\\.');
-  return files
-    .filter((f) => pattern.test(f))
-    .sort()
-    .map((f) => path.join(testDir, f));
-}
+import type { Plugin } from '../plugin-api.js';
+import type { Suite, TestCase } from '../types.js';
 
 async function loadSuite(filePath: string): Promise<Suite> {
   let tests: TestCase[] = [];
@@ -83,13 +68,12 @@ async function loadSuite(filePath: string): Promise<Suite> {
   return { name, tests: allTests, loadPath: filePath };
 }
 
-export async function loadSuites(paths: string[]): Promise<Suite[]> {
-  const suites: Suite[] = [];
-  for (const p of paths) {
-    // eslint-disable-next-line no-await-in-loop
-    const suite = await loadSuite(p);
-    suites.push(suite);
-  }
-  return suites;
-}
-
+export const coreLoaderPlugin: Plugin = {
+  name: 'core-loader',
+  setup(ctx) {
+    ctx.onLoad({ filter: /\.(suite|spectest)\.(js|ts|mjs|cjs|json|yaml|yml)$/ }, async ({ path }) => {
+      const suite = await loadSuite(path);
+      return { suites: [suite] };
+    });
+  },
+};

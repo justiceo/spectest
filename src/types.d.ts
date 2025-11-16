@@ -61,3 +61,25 @@ export interface Suite {
   /** Teardown tests */
   teardown?: TestCase[];
 }
+
+export interface TestResult {
+  passed: boolean;
+  error?: string;
+  latency: number;
+  requestId?: string | null;
+  testName: string;
+  operationId: string;
+  suiteName: string;
+  timedOut?: boolean;
+  request: any;
+  response: {
+    status: number;
+    headers: any;
+    data: any;
+  };
+}
+
+export interface TestRunResult {
+  results: TestResult[];
+  skippedTests: TestCase[];
+}

@@ -4,7 +4,7 @@
   "description": "Declarative API testing that is fast and simple",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "npx -y esbuild src/cli.ts src/helpers.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
+    "build": "npx -y esbuild src/cli.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist",
     "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com"
   },
   "keywords": [
@@ -38,6 +38,7 @@
     "./helpers": "./dist/helpers.js"
   },
   "devDependencies": {
-    "@types/node": "^24.0.12"
+    "@types/node": "^24.0.12",
+    "typescript": "^5.9.3"
   }
 }

@@ -1,10 +1,12 @@
-import Renderer from './renderer';
+import { Renderer } from './renderer';
 import { writeFile, readFile } from 'fs/promises';
 import { existsSync, realpathSync, readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { HttpClient } from './http-client';
+import { PluginManager } from './plugin-manager';
+import { yamlPlugin } from './yaml-plugin';
 
 import { loadConfig } from './config';
 import Server from './server';
@@ -505,11 +507,17 @@ async function runTests(tests: TestCase[], renderer, options = {}) {
 
 async function runAllTests(cfg, verbose = false, tags = []) {
   const renderer = new Renderer({ verbose });
+  const pluginManager = new PluginManager(renderer);
+  pluginManager.loadPlugins([yamlPlugin]);
+  if (cfg.plugins) {
+    pluginManager.loadPlugins(cfg.plugins);
+  }
+
   const progStart = Date.now();
   renderer.start(cfg.baseUrl);
 
   const suitePaths = await resolveSuitePaths(cfg);
-  const suites = await loadSuites(suitePaths);
+  const suites = await loadSuites(suitePaths, pluginManager);
   const tests: TestCase[] = suites.flatMap((suite) =>
     suite.tests.map((t) => ({ ...t, suiteName: suite.name, phase: t.phase }))
   );
@@ -555,6 +563,7 @@ async function runAllTests(cfg, verbose = false, tags = []) {
 
   renderer.showResults(resultsBySuite, serverLogs);
   renderer.showLatency(testResults);
+  await pluginManager.runOnRenderCallbacks(testResults);
   
   if (cfg.snapshotFile) {
     const snapshotCases = testResults.map((r) => ({

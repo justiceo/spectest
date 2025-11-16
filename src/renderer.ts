@@ -2,7 +2,7 @@ export interface RendererOptions {
   verbose?: boolean;
 }
 
-export default class Renderer {
+export class Renderer {
   private verbose: boolean;
 
   constructor(options: RendererOptions = {}) {

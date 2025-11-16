@@ -1,97 +1,71 @@
-import http from 'http';
-import https from 'https';
-
-export async function httpRequest(options) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(options.url);
-    const protocol = url.protocol === 'https:' ? https : http;
-
-    const requestOptions = {
-      method: options.method,
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname,
-      timeout: options.timeout,
-      headers: options.headers,
-    };
-
-    const req = protocol.request(requestOptions, (res) => {
-      let data = '';
-      res.on('data', (chunk) => {
-        data += chunk;
-      });
-      res.on('end', () => {
-        try {
-          const parsedData = JSON.parse(data);
-          resolve({
-            status: res.statusCode,
-            data: parsedData,
-            headers: res.headers,
-          });
-        } catch (error) {
-          resolve({
-            status: res.statusCode,
-            data,
-            headers: res.headers,
-          });
-        }
-      });
-    });
-
-    req.on('error', (error) => {
-      reject(error);
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Request timed out'));
-    });
-
-    if (options.data) {
-      if (typeof options.data === 'object') {
-        req.write(JSON.stringify(options.data));
-      } else {
-        req.write(options.data);
-      }
-    }
-
-    req.end();
-  });
-}
+import type { PluginHost } from './plugin-host';
 
 export class HttpClient {
   private baseURL: string;
   private timeout: number;
   private headers: Record<string, string>;
-  private proxy: any;
+  private pluginHost: PluginHost;
 
-  constructor(config) {
+  constructor(config: {
+    baseURL: string;
+    timeout: number;
+    pluginHost: PluginHost;
+  }) {
     this.baseURL = config.baseURL;
     this.timeout = config.timeout;
+    this.pluginHost = config.pluginHost;
     this.headers = {};
-    this.proxy = config.proxy;
   }
 
-  public setHeader(key, value) {
+  public setHeader(key: string, value: string): void {
     this.headers[key] = value;
   }
 
-  public getTimeout() {
+  public getTimeout(): number {
     return this.timeout;
   }
 
-  public async request(options) {
+  public async request(options: any): Promise<any> {
     const url = new URL(options.url, this.baseURL);
-    const finalOptions = {
-      ...options,
-      url: url.toString(),
-      timeout: options.timeout || this.timeout,
-      headers: {
-        ...this.headers,
-        ...options.headers,
-      },
-      proxy: this.proxy,
-    };
-    return httpRequest(finalOptions);
+    const body =
+      typeof options.data === 'object'
+        ? JSON.stringify(options.data)
+        : options.data;
+
+    const initialRequest = new Request(url.toString(), {
+      method: options.method,
+      headers: { ...this.headers, ...options.headers },
+      body,
+    });
+
+    const transformedRequest = await this.pluginHost.transformRequest(
+      initialRequest
+    );
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, options.timeout || this.timeout);
+
+    try {
+      const response = await fetch(transformedRequest, {
+        signal: controller.signal,
+      });
+
+      const data = await response.json().catch(() => response.text());
+
+      return {
+        status: response.status,
+        data,
+        headers: response.headers,
+      };
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        throw new Error('Request timed out');
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }

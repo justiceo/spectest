@@ -1,5 +1,4 @@
 import { spawn, spawnSync } from 'child_process';
-import { httpRequest } from './http-client';
 
 class Server {
   private serverProcess: ReturnType<typeof spawn> | null = null;
@@ -95,11 +94,12 @@ class Server {
 
   async isRunning(): Promise<boolean> {
     try {
-      const response = await httpRequest({
-        method: 'HEAD',
-        url: this.serverUrl,
-        timeout: 3000,
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => {
+        controller.abort();
+      }, 3000);
+      const response = await fetch(this.serverUrl, { method: 'HEAD', signal: controller.signal });
+      clearTimeout(timeout);
       return response.status >= 200 && response.status < 500;
     } catch {
       return false;

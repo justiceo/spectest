@@ -154,9 +154,13 @@ async function runAllTests(cfg: any) {
     await server.stop();
     rateLimiter.stop();
 
+    const explicitlySkipped = tests.filter((t) => t.skip);
+    explicitlySkipped.forEach((t) => ((t as any).skipReason = 'explicit'));
+    runtimeSkipped.forEach((t) => ((t as any).skipReason = 'runtime'));
+
     await host.dispatchRunEnd({
       results,
-      skippedTests: Array.from(runtimeSkipped),
+      skippedTests: [...explicitlySkipped, ...Array.from(runtimeSkipped)],
       serverLogs: server.getLogs(),
     });
 

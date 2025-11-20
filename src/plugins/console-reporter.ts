@@ -104,19 +104,17 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
           return acc;
         }, {} as Record<string, TestCase[]>);
         Object.entries(skippedBySuite).forEach(([suite, cases]) => {
-          console.log(`  Suite: ${suite}`);
+          console.log(`\n🗂️  Suite: ${suite}`);
           cases.forEach((c) => {
-            console.log(`    - ${c.name}`);
+            const reason = (c as any).skipReason || 'unknown';
+            console.log(`    - ${c.name} (${reason} skip)`);
           });
         });
       }
 
-      const runtimeSkipped = totalTests - results.length - skippedTests.length;
-      const totalSkipped = skippedTests.length + runtimeSkipped;
-
       console.log('\n' + '='.repeat(50));
       const totalTestTime = Date.now() - testStartTime;
-      console.log(`✨ Tests completed: ${passed}/${total} passed, ${totalSkipped} skipped in ${(totalTestTime / 1000).toFixed(2)}s`);
+      console.log(`✨ Tests completed: ${passed}/${total} passed, ${skippedTests.length} skipped in ${(totalTestTime / 1000).toFixed(2)}s`);
 
       if (results.length > 0) {
         const latencies = results.map((r) => r.latency).sort((a, b) => a - b);

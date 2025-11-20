@@ -94,11 +94,65 @@ function shuffle(arr: any[]) {
   }
 }
 
+function toSnakeCase(text: string): string {
+  if (!text) return '';
+  // Handle spaces and non-alphanumeric characters (replace with underscores)
+  let result = text.replace(/[^a-zA-Z0-9]+/g, '_');
+
+  // Insert underscores before uppercase letters (handling both CamelCases)
+  result = result.replace(/([a-z0-9])([A-Z])/g, '$1_$2'); // lowerCamelCase
+  result = result.replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2'); // UpperCamelCase and acronyms
+
+  // Convert to lowercase
+  result = result.toLowerCase();
+
+  // Remove consecutive underscores (clean up extra underscores)
+  result = result.replace(/_+/g, '_');
+
+  // Remove leading and trailing underscores
+  result = result.replace(/^_+|_+$/g, '');
+
+  return result;
+}
+
+function applyPhaseDependencies(tests: TestCase[]): void {
+  const setupTests = tests.filter((t) => t.phase === 'setup');
+  const mainTests = tests.filter((t) => !t.phase || t.phase === 'main');
+  const teardownTests = tests.filter((t) => t.phase === 'teardown');
+
+  // Assign 'main' phase to tests without a phase
+  mainTests.forEach((t) => {
+    if (!t.phase) {
+      t.phase = 'main';
+    }
+  });
+
+  const setupTestIds = setupTests.map((t) => t.operationId);
+  if (setupTestIds.length > 0) {
+    mainTests.forEach((test) => {
+      test.dependsOn = [...new Set([...(test.dependsOn || []), ...setupTestIds])];
+    });
+  }
+
+  const mainTestIds = mainTests.map((t) => t.operationId);
+  if (mainTestIds.length > 0) {
+    teardownTests.forEach((test) => {
+      test.dependsOn = [...new Set([...(test.dependsOn || []), ...mainTestIds])];
+    });
+  }
+}
+
 export const coreFilterPlugin = (cfg: any): Plugin => ({
   name: 'core-filter',
   setup(ctx) {
     ctx.onPrepare(async (suites) => {
       let tests = suites.flatMap((s) => s.tests);
+
+      tests.forEach((test) => {
+        if (!test.operationId) {
+          test.operationId = `${toSnakeCase(test.name)}_ ${Math.floor(Math.random() * 1000)}`;
+        }
+      });
 
       tests = expandRepeats(tests);
       tests = filterTestsByFocus(tests);
@@ -110,6 +164,8 @@ export const coreFilterPlugin = (cfg: any): Plugin => ({
       if (cfg.randomize) {
         shuffle(tests);
       }
+
+      applyPhaseDependencies(tests);
 
       const testsBySuite = tests.reduce((acc, test) => {
         const suiteName = test.suiteName || 'unknown';

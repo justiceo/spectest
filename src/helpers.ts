@@ -55,7 +55,7 @@ function setup(tests) {
 
 function teardown(tests) {
   return tests.map(test => {
-    test.phase = 'setup';
+    test.phase = 'teardown';
     return test
   })
 }

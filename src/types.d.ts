@@ -57,9 +57,9 @@ export interface Suite {
   /** Path the suite was loaded from */
   loadPath?: string;
   /** Setup tests */
-  setup?: TestCase[];
+  setup: TestCase[];
   /** Teardown tests */
-  teardown?: TestCase[];
+  teardown: TestCase[];
 }
 
 export interface TestResult {

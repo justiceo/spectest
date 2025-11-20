@@ -59,7 +59,11 @@ async function runAllTests(cfg: any) {
   }
 
   suites = await host.prepareSuites(suites);
-  const tests = suites.flatMap((s) => s.tests);
+  const setupTests = suites.flatMap((s) => s.setup);
+  const mainTests = suites.flatMap((s) => s.tests);
+  const teardownTests = suites.flatMap((s) => s.teardown);
+
+  const tests = [...setupTests, ...mainTests, ...teardownTests];
 
   try {
     await server.start();
@@ -69,80 +73,96 @@ async function runAllTests(cfg: any) {
   }
 
   await host.dispatchRunStart(tests);
-  
+
   const results: TestResult[] = [];
-  const opIdMap = new Map<string, TestCase>();
-  tests.forEach((t) => {
-    opIdMap.set(t.operationId, t);
-    (t as any).dependents = [];
-    (t as any).unresolvedDependencies = 0;
-    (t as any).__runtimeSkip = false;
-  });
-
   const runtimeSkipped = new Set<any>();
-  tests.forEach((t) => {
-    if (Array.isArray(t.dependsOn) && t.dependsOn.length > 0) {
-      (t as any).unresolvedDependencies = t.dependsOn.length;
-      t.dependsOn.forEach((depId: string) => {
-        const dep = opIdMap.get(depId);
-        if (dep) {
-          (dep as any).dependents.push(t);
-        } else {
-          console.warn("Invalid dependency " + depId)
-          (t as any).__runtimeSkip = true;
-          runtimeSkipped.add(t);
-          (t as any).unresolvedDependencies -= 1;
-        }
-      });
-    }
-  });
 
-  const scheduled = new Set<any>();
-  async function schedule(test: TestCase): Promise<void> {
-    if (test.skip || scheduled.has(test) || (test as any).__runtimeSkip) return;
-    scheduled.add(test);
+  async function runTests(testCases: TestCase[]): Promise<boolean> {
+    const opIdMap = new Map<string, TestCase>();
+    testCases.forEach((t) => {
+      opIdMap.set(t.operationId, t);
+      (t as any).dependents = [];
+      (t as any).unresolvedDependencies = 0;
+      (t as any).__runtimeSkip = false;
+    });
 
-    await host.dispatchTestStart(test);
-    const result = await runTest(test, api, testState, server, rateLimiter);
-    results.push(result);
-
-    if (result.passed) {
-      if (!testState.completedCases[result.operationId]) {
-        testState.completedCases[result.operationId] = result;
+    testCases.forEach((t) => {
+      if (Array.isArray(t.dependsOn) && t.dependsOn.length > 0) {
+        (t as any).unresolvedDependencies = t.dependsOn.length;
+        t.dependsOn.forEach((depId: string) => {
+          const dep = opIdMap.get(depId);
+          if (dep) {
+            (dep as any).dependents.push(t);
+          } else {
+            console.warn('Invalid dependency ' + depId);
+            (t as any).__runtimeSkip = true;
+            runtimeSkipped.add(t);
+            (t as any).unresolvedDependencies -= 1;
+          }
+        });
       }
-    } else {
-      (test as any).dependents.forEach((d: any) => {
-        if (!d.__runtimeSkip) {
-          d.__runtimeSkip = true;
-          runtimeSkipped.add(d);
+    });
+
+    const scheduled = new Set<any>();
+    async function schedule(test: TestCase): Promise<void> {
+      if (test.skip || scheduled.has(test) || (test as any).__runtimeSkip) return;
+      scheduled.add(test);
+
+      await host.dispatchTestStart(test);
+      const result = await runTest(test, api, testState, server, rateLimiter);
+      results.push(result);
+
+      if (result.passed) {
+        if (!testState.completedCases[result.operationId]) {
+          testState.completedCases[result.operationId] = result;
         }
-      });
+      } else {
+        (test as any).dependents.forEach((d: any) => {
+          if (!d.__runtimeSkip) {
+            d.__runtimeSkip = true;
+            runtimeSkipped.add(d);
+          }
+        });
+      }
+
+      await host.dispatchTestEnd(test, result);
+
+      if (result.passed) {
+        const readyDependents = (test as any).dependents.filter((d: any) => {
+          d.unresolvedDependencies -= 1;
+          return d.unresolvedDependencies === 0 && !d.__runtimeSkip;
+        });
+        await Promise.all(readyDependents.map((d: any) => schedule(d)));
+      }
     }
 
-    await host.dispatchTestEnd(test, result);
+    const initialPromises = testCases
+      .filter((t) => (t as any).unresolvedDependencies === 0)
+      .map((t) => schedule(t));
 
-    if (result.passed) {
-      const readyDependents = (test as any).dependents.filter((d: any) => {
-        d.unresolvedDependencies -= 1;
-        return d.unresolvedDependencies === 0 && !d.__runtimeSkip;
-      });
-      await Promise.all(readyDependents.map((d: any) => schedule(d)));
-    }
+    await Promise.all(initialPromises);
+    return results.every((r) => r.passed);
   }
 
-  const initialPromises = tests
-    .filter((t) => (t as any).unresolvedDependencies === 0)
-    .map((t) => schedule(t));
+  try {
+    const setupPassed = await runTests(setupTests);
+    if (setupPassed) {
+      await runTests(mainTests);
+    }
+  } finally {
+    await runTests(teardownTests);
+    await server.stop();
+    rateLimiter.stop();
 
-  await Promise.all(initialPromises);
+    await host.dispatchRunEnd({
+      results,
+      skippedTests: Array.from(runtimeSkipped),
+      serverLogs: server.getLogs(),
+    });
 
-  await server.stop();
-  rateLimiter.stop();
-
-  await host.dispatchRunEnd({ results, skippedTests: Array.from(runtimeSkipped), serverLogs: server.getLogs() });
-
-  const passed = results.every((r) => r.passed);
-  process.exit(passed ? 0 : 1);
+    const passed = results.every((r) => r.passed);
+    process.exit(passed ? 0 : 1);
+  }
 }
 
 async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter): Promise<TestResult> {

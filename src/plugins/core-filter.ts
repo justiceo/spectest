@@ -29,11 +29,13 @@ function expandRepeats(tests: TestCase[]) {
 }
 
 function filterTestsByFocus(tests: TestCase[]) {
-  const focused = tests.filter((t) => t.focus);
-  if (focused.length > 0) {
-    return focused;
+  const hasFocus = tests.some((t) => t.focus);
+  if (!hasFocus) {
+    return tests;
   }
-  return tests;
+  return tests.filter((t) => {
+    return t.phase === 'setup' || t.phase === 'teardown' || t.focus;
+  });
 }
 
 function filterTestsByTags(tests: TestCase[], tags?: string[]) {
@@ -115,33 +117,6 @@ function toSnakeCase(text: string): string {
   return result;
 }
 
-function applyPhaseDependencies(tests: TestCase[]): void {
-  const setupTests = tests.filter((t) => t.phase === 'setup');
-  const mainTests = tests.filter((t) => !t.phase || t.phase === 'main');
-  const teardownTests = tests.filter((t) => t.phase === 'teardown');
-
-  // Assign 'main' phase to tests without a phase
-  mainTests.forEach((t) => {
-    if (!t.phase) {
-      t.phase = 'main';
-    }
-  });
-
-  const setupTestIds = setupTests.map((t) => t.operationId);
-  if (setupTestIds.length > 0) {
-    mainTests.forEach((test) => {
-      test.dependsOn = [...new Set([...(test.dependsOn || []), ...setupTestIds])];
-    });
-  }
-
-  const mainTestIds = mainTests.map((t) => t.operationId);
-  if (mainTestIds.length > 0) {
-    teardownTests.forEach((test) => {
-      test.dependsOn = [...new Set([...(test.dependsOn || []), ...mainTestIds])];
-    });
-  }
-}
-
 export const coreFilterPlugin = (cfg: any): Plugin => ({
   name: 'core-filter',
   setup(ctx) {
@@ -165,21 +140,30 @@ export const coreFilterPlugin = (cfg: any): Plugin => ({
         shuffle(tests);
       }
 
-      applyPhaseDependencies(tests);
+      // applyPhaseDependencies(tests);
 
       const testsBySuite = tests.reduce((acc, test) => {
         const suiteName = test.suiteName || 'unknown';
         if (!acc[suiteName]) {
-          acc[suiteName] = [];
+          acc[suiteName] = {
+            name: suiteName,
+            setup: [],
+            tests: [],
+            teardown: [],
+          };
         }
-        acc[suiteName].push(test);
+        const phase = test.phase || 'main';
+        if (phase === 'setup') {
+          acc[suiteName].setup.push(test);
+        } else if (phase === 'teardown') {
+          acc[suiteName].teardown.push(test);
+        } else {
+          acc[suiteName].tests.push(test);
+        }
         return acc;
-      }, {} as Record<string, TestCase[]>);
+      }, {} as Record<string, Suite>);
 
-      return Object.entries(testsBySuite).map(([name, tests]) => ({
-        name,
-        tests,
-      }));
+      return Object.values(testsBySuite);
     });
   },
 });

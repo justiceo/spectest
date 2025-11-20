@@ -121,7 +121,7 @@ export const coreFilterPlugin = (cfg: any): Plugin => ({
   name: 'core-filter',
   setup(ctx) {
     ctx.onPrepare(async (suites) => {
-      let tests = suites.flatMap((s) => s.tests);
+      let tests = suites.flatMap((s) => [...s.setup, ...s.tests, ...s.teardown]);
 
       tests.forEach((test) => {
         if (!test.operationId) {
@@ -139,8 +139,6 @@ export const coreFilterPlugin = (cfg: any): Plugin => ({
       if (cfg.randomize) {
         shuffle(tests);
       }
-
-      // applyPhaseDependencies(tests);
 
       const testsBySuite = tests.reduce((acc, test) => {
         const suiteName = test.suiteName || 'unknown';

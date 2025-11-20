@@ -65,7 +65,11 @@ async function loadSuite(filePath: string): Promise<Suite> {
     ...teardown.map((t) => ({ ...t, phase: 'teardown' as const })),
   ].map((t) => ({ ...t, suiteName: name }));
 
-  return { name, tests: allTests, loadPath: filePath };
+  const finalSetup = allTests.filter((t) => t.phase === 'setup');
+  const finalTeardown = allTests.filter((t) => t.phase === 'teardown');
+  const finalMain = allTests.filter((t) => t.phase !== 'setup' && t.phase !== 'teardown');
+
+  return { name, tests: finalMain, setup: finalSetup, teardown: finalTeardown, loadPath: filePath };
 }
 
 export const coreLoaderPlugin: Plugin = {

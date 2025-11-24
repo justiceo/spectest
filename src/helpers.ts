@@ -6,7 +6,9 @@ function composeBeforeSend(...fns) {
 
 function composePostTest(...fns) {
   return async (response, state, ctx) => {
-    await Promise.all(fns.map((fn) => fn(response, state, ctx)));
+    for (const fn of fns) {
+      await fn(response, state, ctx);
+    }
   };
 }
 

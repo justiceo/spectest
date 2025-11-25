@@ -10,9 +10,15 @@ function green(text: string): string {
 }
 
 function drawProgressBar(passed: number, failed: number, total: number, width: number = 30): string {
-  const passedWidth = Math.round((passed / total) * width) || 0;
-  const failedWidth = Math.round((failed / total) * width) || 0;
-  const pendingWidth = width - passedWidth - failedWidth;
+  if (total === 0) {
+    const pendingBar = '░'.repeat(width);
+    return `[${pendingBar}]`;
+  }
+  const completed = passed + failed;
+  const completedWidth = Math.round((completed / total) * width);
+  const passedWidth = Math.round((passed / total) * width);
+  const failedWidth = completedWidth - passedWidth;
+  const pendingWidth = width - completedWidth;
 
   const passedBar = green('█'.repeat(passedWidth));
   const failedBar = red('█'.repeat(failedWidth));

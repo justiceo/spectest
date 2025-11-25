@@ -4,7 +4,7 @@ export default {
   testDir: './test',
   filePattern: '\\.spectest\\.',
   rps: Infinity,
-  timeout: 30000,
+  timeout: 60000,
   randomize: false,
   happy: false,
   filter: '',

@@ -142,7 +142,7 @@ That’s where Spectest was born—out of necessity.
 | `repeat` | Extra sequential runs of the test | `0` |
 | `bombard` | Additional simultaneous runs of the test | `0` |
 | `delay` | Milliseconds to wait before running | none |
-| `timeout` | Per-test timeout override | runtime `timeout` (30000ms) |
+| `timeout` | Per-test timeout override | runtime `timeout` (60000ms) |
 
 ### Config options
 
@@ -157,7 +157,7 @@ That’s where Spectest was born—out of necessity.
 | `runningServer` | Handling for an existing server (`reuse`, `fail`, or `kill`) | `reuse` |
 | `tags` | String list used for filtering tests | [] |
 | `rps` | Requests per second rate limit | Infinity |
-| `timeout` | Default request timeout in milliseconds | `30000` |
+| `timeout` | Default request timeout in milliseconds | `60000` |
 | `snapshotFile` | Path to write a snapshot file | none |
 | `randomize` | Shuffle tests ordering before execution | `false` |
 | `happy` | Run only tests expecting 2xx status. Quick filter for testing the happy path. | `false` |
@@ -363,7 +363,7 @@ filters are provided:
 
 ### Test timeout
 
-Use the `timeout` option to limit how long each test case may run. Specify `timeout` in `spectest.config.js` or pass `--timeout=<milliseconds>` on the command line. The default is `30000` (30 seconds). Individual tests can override this by including a `timeout` property. When a request exceeds the effective timeout, the test fails with a `⏰` indicator in the summary.
+Use the `timeout` option to limit how long each test case may run. Specify `timeout` in `spectest.config.js` or pass `--timeout=<milliseconds>` on the command line. The default is `60000` (30 seconds). Individual tests can override this by including a `timeout` property. When a request exceeds the effective timeout, the test fails with a `⏰` indicator in the summary.
 
 ### Check for robustness of API
 

@@ -30,7 +30,7 @@ async function runAllTests(cfg: any) {
 
   const api = new HttpClient({
     baseURL: cfg.baseUrl,
-    timeout: cfg.timeout || 30000,
+    timeout: cfg.timeout,
     pluginHost: host,
   });
   api.setHeader('User-Agent', resolveUserAgent(cfg.userAgent));

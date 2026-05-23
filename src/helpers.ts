@@ -62,6 +62,13 @@ function teardown(tests) {
   })
 }
 
+function recording(tests, mode) {
+  return tests.map((test) => {
+    test.recording = mode;
+    return test;
+  });
+}
+
 export {
   composeBeforeSend,
   composePostTest,
@@ -72,4 +79,5 @@ export {
   skip,
   setup,
   teardown,
+  recording,
 };

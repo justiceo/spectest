@@ -6,3 +6,4 @@
 .env*
 *.tsbuildinfo
 todo*
+*/*/.spectest/*

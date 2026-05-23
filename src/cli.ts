@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'fs';
-import { readdir } from 'fs/promises';
+import { readFile, readdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -12,12 +12,27 @@ import { PluginHost } from './plugin-host';
 import { coreLoaderPlugin } from './plugins/core-loader';
 import { coreFilterPlugin } from './plugins/core-filter';
 import { consoleReporterPlugin } from './plugins/console-reporter';
+import { HttpRecordingCassette, type MissingRecordingBehavior, type RecordingMode } from './recording-cassette';
 import type { Suite, TestCase, TestResult } from "./types";
 
 type SkipStatus = 'skipped' | 'failed-precondition';
 
 async function runAllTests(cfg: any) {
   const server = new Server();
+  const spectestVersion = await getSpectestVersion();
+  const recordingEnabled = cfg.recording !== 'off';
+  const recordingCassette = recordingEnabled
+    ? new HttpRecordingCassette({
+        file: cfg.recordingFile,
+        mode: cfg.recording,
+        missingRecordingBehavior: cfg.missingRecordingBehavior,
+        recordingExcludeUrls: cfg.recordingExcludeUrls,
+        spectestVersion,
+      })
+    : null;
+  if (recordingCassette) {
+    await recordingCassette.load();
+  }
   const testState = {
     sessionCookie: null,
     completedCases: {} as Record<string, any>,
@@ -42,6 +57,11 @@ async function runAllTests(cfg: any) {
     buildCmd: cfg.buildCmd,
     serverUrl: cfg.baseUrl,
     runningServer: cfg.runningServer,
+    recording: {
+      enabled: recordingEnabled,
+      preloadPath: fileURLToPath(new URL('./recording-preload.js', import.meta.url)),
+      cassette: recordingCassette || undefined,
+    },
   });
 
   const rateLimiter = new RateLimiter(cfg.rps || Infinity);
@@ -118,7 +138,7 @@ async function runAllTests(cfg: any) {
       scheduled.add(test);
 
       await host.dispatchTestStart(test);
-      const result = await runTest(test, api, testState, server, rateLimiter);
+      const result = await runTest(test, api, testState, server, rateLimiter, cfg);
       results.push(result);
       phaseResults.push(result);
       executedTests.add(test);
@@ -176,6 +196,9 @@ async function runAllTests(cfg: any) {
   } finally {
     await runTests(teardownTests);
     await server.stop();
+    if (recordingCassette) {
+      await recordingCassette.save();
+    }
     rateLimiter.stop();
 
     const explicitlySkipped = tests.filter((t) => t.skip && !executedTests.has(t));
@@ -221,7 +244,21 @@ function createSkippedResult(test: TestCase, status: SkipStatus): TestResult {
   };
 }
 
-async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter): Promise<TestResult> {
+async function getSpectestVersion(): Promise<string> {
+  try {
+    const packageJsonUrl = new URL('../package.json', import.meta.url);
+    const raw = await readFile(packageJsonUrl, 'utf8');
+    return JSON.parse(raw).version || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function resolveRecordingMode(test: TestCase, cfg: any): RecordingMode {
+  return test.recording || cfg.recording;
+}
+
+async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter, cfg: any): Promise<TestResult> {
     if (typeof test.delay === 'number' && test.delay > 0) {
     await new Promise((resolve) => {
       setTimeout(resolve, test.delay);
@@ -247,7 +284,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       url: test.endpoint,
       // todo: rename data to body.
       data: test.request?.body,
-      headers: {...test.request?.headers},
+      headers: { ...test.request?.headers } as Record<string, string>,
     };
 
     if (test.request?.credentials === 'include' && testState.sessionCookie) {
@@ -258,6 +295,15 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       const immutableState = JSON.parse(JSON.stringify(testState));
       const updatedConfig = await test.beforeSend(config, immutableState);
       if (updatedConfig) config = updatedConfig;
+    }
+
+    if (cfg.recording !== 'off') {
+      config.headers = { ...config.headers };
+      config.headers['x-spectest-case-id'] = test.operationId || test.name;
+      config.headers['x-spectest-test-name'] = test.name;
+      config.headers['x-spectest-suite-name'] = test.suiteName || '';
+      config.headers['x-spectest-recording-mode'] = resolveRecordingMode(test, cfg);
+      config.headers['x-spectest-missing-recording-behavior'] = cfg.missingRecordingBehavior as MissingRecordingBehavior;
     }
 
     await rateLimiter.acquire();

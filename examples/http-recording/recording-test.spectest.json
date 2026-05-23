@@ -1,0 +1,69 @@
+{
+  "name": "HTTP recording sample",
+  "tests": [
+    {
+      "name": "Health check does not need outbound recording",
+      "endpoint": "/health",
+      "recording": "off",
+      "response": {
+        "status": 200,
+        "json": {
+          "ok": true
+        }
+      }
+    },
+    {
+      "name": "Excluded 1.1.1.1 call stays live",
+      "operationId": "excludedOneOneOneOne",
+      "endpoint": "/excluded-ping",
+      "response": {
+        "status": 200,
+        "json": {
+          "ok": true,
+          "status": 200,
+          "excludedUrl": "https://1.1.1.1/cdn-cgi/trace"
+        }
+      }
+    },
+    {
+      "name": "Post includes author fetched from upstream",
+      "operationId": "postWithAuthor",
+      "endpoint": "/posts/1",
+      "response": {
+        "status": 200,
+        "json": {
+          "id": 1,
+          "author": {
+            "id": 1,
+            "name": "Leanne Graham",
+            "email": "Sincere@april.biz"
+          }
+        }
+      }
+    },
+    {
+      "name": "User summary combines multiple upstream calls",
+      "operationId": "userSummary",
+      "endpoint": "/users/1/summary",
+      "response": {
+        "status": 200,
+        "json": {
+          "id": 1,
+          "postCount": 10
+        }
+      }
+    },
+    {
+      "name": "Comment search preserves query matching",
+      "operationId": "commentSearch",
+      "endpoint": "/search/comments?postId=1",
+      "response": {
+        "status": 200,
+        "json": {
+          "postId": 1,
+          "count": 5
+        }
+      }
+    }
+  ]
+}

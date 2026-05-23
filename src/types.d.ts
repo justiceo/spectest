@@ -43,6 +43,8 @@ export interface TestCase {
   rps?: number;
   /** Per-test timeout in milliseconds */
   timeout?: number;
+  /** Per-test HTTP recording override */
+  recording?: RecordingMode;
   /** Called before sending the request */
   beforeSend?: (req: any, state: any) => Promise<any> | any;
   /** Called after receiving the response */
@@ -69,6 +71,19 @@ export type RuntimeTestCase = TestCase & {
 };
 
 export type TestOutputMode = 'summary' | 'errors';
+export type RecordingMode = 'off' | 'replay' | 'record';
+export type MissingRecordingBehavior = 'fail' | 'record' | 'bypass';
+export interface SerializedHttpRequest {
+  id?: string;
+  method: string;
+  url: string;
+  headers: Array<[string, string]>;
+  body?: string | null;
+}
+export type RecordingUrlExclusion =
+  | string
+  | RegExp
+  | ((url: URL, request: SerializedHttpRequest) => boolean);
 
 export interface SpectestConfig {
   configFile?: string;
@@ -91,6 +106,10 @@ export interface SpectestConfig {
   proxy?: string;
   suiteFile?: string;
   projectRoot?: string;
+  recording?: RecordingMode;
+  recordingFile?: string;
+  missingRecordingBehavior?: MissingRecordingBehavior;
+  recordingExcludeUrls?: RecordingUrlExclusion[];
 }
 
 export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition';

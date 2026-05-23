@@ -12,4 +12,8 @@ export default {
   runningServer: 'reuse',
   userAgent: 'chrome_windows',
   proxy: '',
+  recording: 'off',
+  recordingFile: '.spectest/cassette.json',
+  missingRecordingBehavior: 'fail',
+  recordingExcludeUrls: [],
 };

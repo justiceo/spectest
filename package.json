@@ -4,7 +4,7 @@
   "description": "Declarative API testing that is fast and simple",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "npx -y esbuild src/cli.ts src/helpers.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
+    "build": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
     "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com"
   },
   "keywords": [
@@ -28,6 +28,7 @@
   "license": "MIT",
   "type": "module",
   "dependencies": {
+    "@mswjs/interceptors": "^0.41.9",
     "js-yaml": "^4.1.0"
   },
   "bin": {
@@ -35,7 +36,8 @@
   },
   "exports": {
     ".": "./dist/cli.js",
-    "./helpers": "./dist/helpers.js"
+    "./helpers": "./dist/helpers.js",
+    "./recordings": "./dist/recordings.js"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",

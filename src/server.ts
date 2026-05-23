@@ -1,4 +1,11 @@
 import { spawn, spawnSync } from 'child_process';
+import type { HttpRecordingCassette, RecordingDecision, SerializedHttpRequest, SerializedHttpResponse } from './recording-cassette';
+
+interface RecordingServerConfig {
+  enabled: boolean;
+  preloadPath?: string;
+  cassette?: HttpRecordingCassette;
+}
 
 class Server {
   private serverProcess: ReturnType<typeof spawn> | null = null;
@@ -8,6 +15,13 @@ class Server {
   private startCommand = 'npm run start';
   private serverUrl = 'http://localhost:8080';
   private runningServer: 'reuse' | 'fail' | 'kill' = 'reuse';
+  private recording: RecordingServerConfig = { enabled: false };
+
+  private debug(message: string, details?: Record<string, unknown>): void {
+    const suffix = details ? ` ${JSON.stringify(details)}` : '';
+    // todo: only output when verbose output is enabled.
+    console.log(`[spectest:server] ${message}${suffix}`);
+  }
 
   setStartCommand(cmd?: string): void {
     if (cmd) this.startCommand = cmd;
@@ -26,11 +40,65 @@ class Server {
     buildCmd?: string;
     serverUrl?: string;
     runningServer?: 'reuse' | 'fail' | 'kill';
+    recording?: RecordingServerConfig;
   } = {}): void {
     if (cfg.startCommand) this.setStartCommand(cfg.startCommand);
     if (cfg.buildCmd) this.setBuildCommand(cfg.buildCmd);
     if (cfg.serverUrl) this.setServerUrl(cfg.serverUrl);
     if (cfg.runningServer) this.runningServer = cfg.runningServer;
+    if (cfg.recording) this.recording = cfg.recording;
+    this.debug('configured', {
+      serverUrl: this.serverUrl,
+      startCommand: this.startCommand,
+      buildCommand: this.buildCommand || null,
+      runningServer: this.runningServer,
+      recordingEnabled: this.recording.enabled,
+      recordingPreload: this.recording.preloadPath || null,
+    });
+  }
+
+  private handleRecordingMessage(message: any): void {
+    if (!this.recording.enabled || !this.recording.cassette || !this.serverProcess) return;
+
+    if (message?.type === 'spectest:recording:request') {
+      const request = message.request as SerializedHttpRequest;
+      const decision = this.recording.cassette.decide(request);
+      this.debug('recording decision', {
+        requestId: message.requestId,
+        method: request.method,
+        url: request.url,
+        action: decision.action,
+      });
+      this.sendRecordingDecision(message.requestId, decision);
+      return;
+    }
+
+    if (message?.type === 'spectest:recording:response') {
+      const request = message.request as SerializedHttpRequest;
+      const response = message.response as SerializedHttpResponse;
+      this.debug('recording response', {
+        requestId: message.requestId,
+        method: request.method,
+        url: request.url,
+        status: response.status,
+      });
+      this.recording.cassette.record(
+        request,
+        response
+      );
+    }
+  }
+
+  private sendRecordingDecision(requestId: string, decision: RecordingDecision): void {
+    if (!this.serverProcess?.send) {
+      this.debug('unable to send recording decision; server IPC unavailable', { requestId });
+      return;
+    }
+    this.serverProcess.send({
+      type: 'spectest:recording:decision',
+      requestId,
+      ...decision,
+    });
   }
 
   private killProcessOnPort(port: string): void {
@@ -94,20 +162,32 @@ class Server {
 
   async isRunning(): Promise<boolean> {
     try {
+      this.debug('health check started', { url: this.serverUrl });
       const controller = new AbortController();
       const timeout = setTimeout(() => {
         controller.abort();
       }, 3000);
       const response = await fetch(this.serverUrl, { method: 'HEAD', signal: controller.signal });
       clearTimeout(timeout);
+      this.debug('health check completed', { status: response.status });
       return response.status >= 200 && response.status < 500;
-    } catch {
+    } catch (error: any) {
+      this.debug('health check failed', { message: error.message });
       return false;
     }
   }
 
   async start(): Promise<void> {
+    this.debug('start requested', {
+      serverUrl: this.serverUrl,
+      runningServer: this.runningServer,
+      recordingEnabled: this.recording.enabled,
+    });
     if (await this.isRunning()) {
+      if (this.recording.enabled && this.runningServer === 'reuse') {
+        this.debug('recording cannot reuse existing server');
+        throw new Error('HTTP recording requires Spectest to start the Node server; runningServer: "reuse" cannot be used with recording enabled');
+      }
       if (this.runningServer === 'reuse') {
         console.log(`✅ Using existing server at ${this.serverUrl}`);
         this.startedByHelper = false;
@@ -127,10 +207,28 @@ class Server {
         console.log('✅ Starting server...');
         this.startedByHelper = true;
         const [cmd, ...args] = this.startCommand.split(' ');
-        this.serverProcess = spawn(cmd, args, {
-          stdio: 'pipe',
-          env: { ...process.env, PORT: '8080' },
+        const nodeOptions = this.recording.enabled
+          ? `${process.env.NODE_OPTIONS || ''} --import ${this.recording.preloadPath}`.trim()
+          : process.env.NODE_OPTIONS;
+        this.debug('spawning server process', {
+          command: cmd,
+          args,
+          recordingEnabled: this.recording.enabled,
+          nodeOptions: nodeOptions || null,
         });
+        this.serverProcess = spawn(cmd, args, {
+          stdio: this.recording.enabled ? ['ignore', 'pipe', 'pipe', 'ipc'] : 'pipe',
+          env: {
+            ...process.env,
+            PORT: '8080',
+            NODE_OPTIONS: nodeOptions,
+          },
+        });
+
+        if (this.recording.enabled) {
+          this.debug('recording IPC listener attached');
+          this.serverProcess.on('message', (message) => this.handleRecordingMessage(message));
+        }
 
         this.serverProcess.stdout.on('data', (data: Buffer) => {
           const logLine = data.toString();

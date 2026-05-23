@@ -1,7 +1,7 @@
 import path from 'path';
 import { existsSync } from 'fs';
 import defaultConfig from './default.config';
-import type { TestOutputMode } from './types';
+import type { MissingRecordingBehavior, RecordingMode, RecordingUrlExclusion, TestOutputMode } from './types';
 
 export interface CliConfig {
   configFile?: string;
@@ -24,6 +24,10 @@ export interface CliConfig {
   proxy?: string;
   suiteFile?: string;
   projectRoot?: string;
+  recording?: RecordingMode;
+  recordingFile?: string;
+  missingRecordingBehavior?: MissingRecordingBehavior;
+  recordingExcludeUrls?: RecordingUrlExclusion[];
 }
 
 function parseTestOutput(value: string | undefined): TestOutputMode {
@@ -40,6 +44,44 @@ function validateConfiguredTestOutput(value: unknown): asserts value is TestOutp
   }
   console.error('error: testOutput must be "summary" or "errors"');
   process.exit(1);
+}
+
+function parseRecording(value: string | undefined): RecordingMode {
+  if (value === 'off' || value === 'replay' || value === 'record') return value;
+  console.error('error: --recording must be "off", "replay", or "record"');
+  process.exit(1);
+}
+
+function validateConfiguredRecording(value: unknown): asserts value is RecordingMode {
+  if (value === 'off' || value === 'replay' || value === 'record') return;
+  console.error('error: recording must be "off", "replay", or "record"');
+  process.exit(1);
+}
+
+function parseMissingRecordingBehavior(value: string | undefined): MissingRecordingBehavior {
+  if (value === 'fail' || value === 'record' || value === 'bypass') return value;
+  console.error('error: --missing-recording-behavior must be "fail", "record", or "bypass"');
+  process.exit(1);
+}
+
+function validateConfiguredMissingRecordingBehavior(value: unknown): asserts value is MissingRecordingBehavior {
+  if (value === 'fail' || value === 'record' || value === 'bypass') return;
+  console.error('error: missingRecordingBehavior must be "fail", "record", or "bypass"');
+  process.exit(1);
+}
+
+function validateConfiguredRecordingExcludeUrls(value: unknown): asserts value is RecordingUrlExclusion[] {
+  if (!Array.isArray(value)) {
+    console.error('error: recordingExcludeUrls must be an array');
+    process.exit(1);
+  }
+  const invalid = value.find((item) => {
+    return typeof item !== 'string' && !(item instanceof RegExp) && typeof item !== 'function';
+  });
+  if (invalid !== undefined) {
+    console.error('error: recordingExcludeUrls entries must be strings, RegExp objects, or functions');
+    process.exit(1);
+  }
 }
 
 function parseArgs(argv: string[]): CliConfig {
@@ -115,6 +157,15 @@ function parseArgs(argv: string[]): CliConfig {
         case 'proxy':
           raw.proxy = value;
           break;
+        case 'recording':
+          raw.recording = parseRecording(value);
+          break;
+        case 'recording-file':
+          raw.recordingFile = value;
+          break;
+        case 'missing-recording-behavior':
+          raw.missingRecordingBehavior = parseMissingRecordingBehavior(value);
+          break;
         case 'dir':
           raw.projectRoot = value;
           break;
@@ -165,7 +216,17 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   cfg = { ...cfg, ...restCliOpts };
   cfg.projectRoot = projectRoot;
   cfg.runningServer = (cfg.runningServer as any) || 'reuse';
+  cfg.recording = (cfg.recording as any) || 'off';
+  cfg.recordingFile = cfg.recordingFile || '.spectest/cassette.json';
+  cfg.missingRecordingBehavior = (cfg.missingRecordingBehavior as any) || 'fail';
+  cfg.recordingExcludeUrls = cfg.recordingExcludeUrls || [];
   validateConfiguredTestOutput(cfg.testOutput);
+  validateConfiguredRecording(cfg.recording);
+  validateConfiguredMissingRecordingBehavior(cfg.missingRecordingBehavior);
+  validateConfiguredRecordingExcludeUrls(cfg.recordingExcludeUrls);
+  if (cfg.recordingFile) {
+    cfg.recordingFile = path.resolve(projectRoot, cfg.recordingFile);
+  }
 
   return cfg;
 }

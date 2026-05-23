@@ -143,6 +143,7 @@ That’s where Spectest was born—out of necessity.
 | `bombard` | Additional simultaneous runs of the test | `0` |
 | `delay` | Milliseconds to wait before running | none |
 | `timeout` | Per-test timeout override | runtime `timeout` (60000ms) |
+| `recording` | Per-test HTTP recording mode override (`off`, `replay`, or `record`) | runtime `recording` |
 
 ### Config options
 
@@ -165,10 +166,14 @@ That’s where Spectest was born—out of necessity.
 | `testOutput` | Executed test result detail (`summary` or `errors`). Use `errors` to include failed-test server logs and failure reasons in the report. | `summary` |
 | `verbose` | Verbose spectest runner/program output. This is separate from test result detail. | `false` |
 | `userAgent` | Browser User-Agent string to send or one of the predefined [user-agents](https://github.com/justiceo/spectest/blob/main/src/user-agents.ts). | `chrome_windows` |
+| `recording` | HTTP recording mode for outbound Node SUT requests (`off`, `replay`, or `record`) | `off` |
+| `recordingFile` | JSON cassette path used for HTTP recordings | `.spectest/cassette.json` |
+| `missingRecordingBehavior` | Behavior when replay cannot find a cassette entry (`fail`, `record`, or `bypass`) | `fail` |
+| `recordingExcludeUrls` | URL patterns that always bypass HTTP cassette handling | `[]` |
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` (`--dir`) | Root directory of the project | current working directory |
 
-`testOutput` can also be set from the CLI with `--test-output=summary` or `--test-output=errors`. CLI values override `spectest.config.js`.
+`testOutput` can also be set from the CLI with `--test-output=summary` or `--test-output=errors`. HTTP recording can be set with `--recording=off|replay|record`, `--recording-file=<path>`, and `--missing-recording-behavior=fail|record|bypass`. CLI values override `spectest.config.js`.
 
 
 ## API Testing Tips
@@ -310,6 +315,84 @@ export default [
 
 The CLI uses the native fetch API which has proxy support from Node 24+. See https://nodejs.org/api/http.html#built-in-proxy-support for more information on how to set it up.
 
+### Recording outbound HTTP calls
+
+Spectest can record and replay outbound HTTP requests made by a Node-based server under test. Spectest still sends real requests to your local API, but the API process is started with a recording preload so its external `fetch`, `http`, `https`, and common library calls can be captured.
+
+```js
+// spectest.config.js
+
+export default {
+  baseUrl: 'http://localhost:3000',
+  startCmd: 'npm run start',
+  runningServer: 'kill',
+  recording: 'replay',
+  recordingFile: '.spectest/cassette.json',
+  missingRecordingBehavior: 'fail',
+  recordingExcludeUrls: [
+    'https://telemetry.example.com/',
+    /^https:\/\/metadata\.google\.internal\//,
+    (url) => url.hostname.endsWith('.internal.example.com'),
+  ],
+};
+```
+
+To create or update a cassette:
+
+```bash
+npx spectest --recording=record
+```
+
+To replay from the cassette:
+
+```bash
+npx spectest --recording=replay
+```
+
+`missingRecordingBehavior` controls replay misses:
+
+| Value | Behavior |
+| ----- | -------- |
+| `fail` | Fail the outbound request with a clear unmatched-recording error |
+| `record` | Allow the real outbound request and save it to the cassette |
+| `bypass` | Allow the real outbound request without saving it |
+
+`recordingExcludeUrls` always bypasses cassette handling. String entries are canonical URL prefix matches, `RegExp` entries are tested against the canonical URL string, and predicate entries receive `(url, request)`.
+
+Per-test `recording` can override only the mode. When it is unset, the test inherits the run-level `recording` mode.
+
+```js
+export default [
+  {
+    name: 'Health check bypasses cassette',
+    endpoint: '/health',
+    recording: 'off',
+  },
+];
+```
+
+Recording requires Spectest to start the Node server process. If an already-running server is reused, Spectest cannot reliably instrument outbound calls, so `runningServer: 'reuse'` is not compatible with recording.
+
+You can also use the framework-agnostic helper in plain Node tests:
+
+```js
+import { useHttpRecordings } from 'spectest/recordings';
+
+let recordings;
+
+beforeAll(async () => {
+  recordings = await useHttpRecordings({
+    file: '.spectest/cassette.json',
+    mode: 'replay',
+    missingRecordingBehavior: 'fail',
+    recordingExcludeUrls: ['https://telemetry.example.com/'],
+  });
+});
+
+afterAll(async () => {
+  await recordings.dispose();
+});
+```
 
 ### Filtering test cases
 
@@ -424,6 +507,14 @@ const suite = [
 export default focus(delay(suite, 500));
 ```
 
+Helpers are also available for recording mode overrides:
+
+```js
+import { recording } from 'spectest/helpers';
+
+export default recording(suite, 'off');
+```
+
 And you can create your own helpers to reduce repetition of common request/response properties!
 
 ### Test formats
@@ -431,4 +522,3 @@ And you can create your own helpers to reduce repetition of common request/respo
 Test cases can be written in `.js`, plain `.json` and `.yaml` files, or `.mjs` for ESM and `.cjs` for CommonJs modules.
 
 Typescript (`.ts`) files are not yet supported, you'd need to transpile them to any of the supported Js modules above.
-

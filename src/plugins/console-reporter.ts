@@ -1,5 +1,5 @@
 import type { Plugin } from '../plugin-api.js';
-import type { TestCase, TestResult } from '../types.js';
+import type { TestResult, TestResultStatus } from '../types.js';
 
 function red(text: string): string {
   return `\u001b[31m${text}\u001b[39m`;
@@ -7,6 +7,14 @@ function red(text: string): string {
 
 function green(text: string): string {
   return `\u001b[32m${text}\u001b[39m`;
+}
+
+function yellow(text: string): string {
+  return `\u001b[33m${text}\u001b[39m`;
+}
+
+function gray(text: string): string {
+  return `\u001b[90m${text}\u001b[39m`;
 }
 
 function drawProgressBar(passed: number, failed: number, total: number, width: number = 30): string {
@@ -27,6 +35,22 @@ function drawProgressBar(passed: number, failed: number, total: number, width: n
   return `[${passedBar}${failedBar}${pendingBar}]`;
 }
 
+function resultIcon(result: TestResult): string {
+  if (result.timedOut) return '⏰';
+
+  const icons: Record<TestResultStatus, string> = {
+    passed: '✅',
+    failed: '❌',
+    skipped: yellow('⏭️ '),
+    'failed-precondition': gray('↷ '),
+  };
+  return icons[result.status];
+}
+
+function shouldShowFailureDetails(result: TestResult): boolean {
+  return result.status === 'failed';
+}
+
 export const consoleReporterPlugin = (cfg: any): Plugin => ({
   name: 'console-reporter',
   setup(ctx) {
@@ -43,9 +67,9 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
     });
 
     ctx.onTestEnd((test, result) => {
-      if (result?.passed) {
+      if (result.status === 'passed') {
         passedTests++;
-      } else {
+      } else if (result.status === 'failed') {
         failedTests++;
       }
       const progress = passedTests + failedTests;
@@ -57,8 +81,10 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
     ctx.onRunEnd((runResult) => {
       process.stdout.write('\n'); // Clear progress bar line
 
-      const { results, skippedTests, serverLogs } = runResult;
-      const passed = results.filter((r) => r.passed).length;
+      const { results, serverLogs } = runResult;
+      const passed = results.filter((r) => r.status === 'passed').length;
+      const skipped = results.filter((r) => r.status === 'skipped').length;
+      const failedPreconditions = results.filter((r) => r.status === 'failed-precondition').length;
       const total = results.length;
 
       const resultsBySuite = results.reduce((acc, r) => {
@@ -74,9 +100,9 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
       Object.entries(resultsBySuite).forEach(([suite, suiteResults]) => {
         console.log(`\n🗂️  Suite: ${suite}`);
         suiteResults.forEach((result) => {
-          const icon = result.timedOut ? '⏰' : result.passed ? '✅' : '❌';
+          const icon = resultIcon(result);
           console.log(`  [${icon}] ${result.testName} (${result.latency}ms)`);
-          if (!result.passed) {
+          if (shouldShowFailureDetails(result)) {
             const requestLogs = result.requestId
               ? serverLogs.filter((log) => log.message.includes(result.requestId!))
               : [];
@@ -99,28 +125,12 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
         });
       });
 
-      if (skippedTests.length > 0) {
-        console.log(`\n⏭️  Skipped ${skippedTests.length} tests:`);
-        const skippedBySuite = skippedTests.reduce((acc, t) => {
-          const s = t.suiteName || 'unknown';
-          if (!acc[s]) {
-            acc[s] = [];
-          }
-          acc[s].push(t);
-          return acc;
-        }, {} as Record<string, TestCase[]>);
-        Object.entries(skippedBySuite).forEach(([suite, cases]) => {
-          console.log(`\n🗂️  Suite: ${suite}`);
-          cases.forEach((c) => {
-            const reason = (c as any).skipReason || 'unknown';
-            console.log(`    - ${c.name} (${reason} skip)`);
-          });
-        });
-      }
-
       console.log('\n' + '='.repeat(50));
       const totalTestTime = Date.now() - testStartTime;
-      console.log(`✨ Tests completed: ${passed}/${total} passed, ${skippedTests.length} skipped in ${(totalTestTime / 1000).toFixed(2)}s`);
+      const skipSummary = failedPreconditions > 0
+        ? `${skipped} skipped, ${failedPreconditions} failed precondition`
+        : `${skipped} skipped`;
+      console.log(`✨ Tests completed: ${passed}/${total} passed, ${skipSummary} in ${(totalTestTime / 1000).toFixed(2)}s`);
 
       if (results.length > 0) {
         const latencies = results.map((r) => r.latency).sort((a, b) => a - b);

@@ -14,6 +14,8 @@ import { coreFilterPlugin } from './plugins/core-filter';
 import { consoleReporterPlugin } from './plugins/console-reporter';
 import type { Suite, TestCase, TestResult } from "./types";
 
+type SkipStatus = 'skipped' | 'failed-precondition';
+
 async function runAllTests(cfg: any) {
   const server = new Server();
   const testState = {
@@ -77,8 +79,14 @@ async function runAllTests(cfg: any) {
 
   const results: TestResult[] = [];
   const runtimeSkipped = new Set<any>();
+  const executedTests = new Set<TestCase>();
+  const testOrder = new Map<TestCase, number>();
+  tests.forEach((test, index) => {
+    testOrder.set(test, index);
+  });
 
   async function runTests(testCases: TestCase[]): Promise<boolean> {
+    const phaseResults: TestResult[] = [];
     const opIdMap = new Map<string, TestCase>();
     testCases.forEach((t) => {
       opIdMap.set(t.operationId, t);
@@ -112,8 +120,10 @@ async function runAllTests(cfg: any) {
       await host.dispatchTestStart(test);
       const result = await runTest(test, api, testState, server, rateLimiter);
       results.push(result);
+      phaseResults.push(result);
+      executedTests.add(test);
 
-      if (result.passed) {
+      if (result.status === 'passed') {
         if (!testState.completedCases[result.operationId]) {
           testState.completedCases[result.operationId] = result;
         }
@@ -128,7 +138,7 @@ async function runAllTests(cfg: any) {
 
       await host.dispatchTestEnd(test, result);
 
-      if (result.passed) {
+      if (result.status === 'passed') {
         const readyDependents = (test as any).dependents.filter((d: any) => {
           d.unresolvedDependencies -= 1;
           return d.unresolvedDependencies === 0 && !d.__runtimeSkip;
@@ -142,32 +152,73 @@ async function runAllTests(cfg: any) {
       .map((t) => schedule(t));
 
     await Promise.all(initialPromises);
-    return results.every((r) => r.passed);
+    testCases.forEach((test) => {
+      if (!test.skip && !executedTests.has(test)) {
+        runtimeSkipped.add(test);
+      }
+    });
+    return testCases.every((test) => {
+      return test.skip || (executedTests.has(test) && !runtimeSkipped.has(test));
+    }) && phaseResults.every((r) => r.status === 'passed');
   }
 
   try {
     const setupPassed = await runTests(setupTests);
     if (setupPassed) {
       await runTests(mainTests);
+    } else {
+      mainTests.forEach((test) => {
+        if (!test.skip) {
+          runtimeSkipped.add(test);
+        }
+      });
     }
   } finally {
     await runTests(teardownTests);
     await server.stop();
     rateLimiter.stop();
 
-    const explicitlySkipped = tests.filter((t) => t.skip);
-    explicitlySkipped.forEach((t) => ((t as any).skipReason = 'explicit'));
-    runtimeSkipped.forEach((t) => ((t as any).skipReason = 'runtime'));
+    const explicitlySkipped = tests.filter((t) => t.skip && !executedTests.has(t));
+    const skipResults = [
+      ...explicitlySkipped.map((test) => createSkippedResult(test, 'skipped')),
+      ...Array.from(runtimeSkipped)
+        .filter((test) => !test.skip && !executedTests.has(test))
+        .map((test) => createSkippedResult(test, 'failed-precondition')),
+    ];
+    const finalResults = [...results, ...skipResults].sort((a, b) => {
+      return (resultOrder(a) ?? Number.MAX_SAFE_INTEGER) - (resultOrder(b) ?? Number.MAX_SAFE_INTEGER);
+    });
 
     await host.dispatchRunEnd({
-      results,
-      skippedTests: [...explicitlySkipped, ...Array.from(runtimeSkipped)],
+      results: finalResults,
       serverLogs: server.getLogs(),
     });
 
-    const passed = results.every((r) => r.passed);
+    const passed = finalResults.every((r) => r.status !== 'failed');
     process.exit(passed ? 0 : 1);
   }
+
+  function resultOrder(result: TestResult): number | undefined {
+    const test = tests.find((t) => t.operationId === result.operationId);
+    return test ? testOrder.get(test) : undefined;
+  }
+}
+
+function createSkippedResult(test: TestCase, status: SkipStatus): TestResult {
+  return {
+    status,
+    latency: 0,
+    requestId: null,
+    testName: test.name,
+    operationId: test.operationId,
+    suiteName: test.suiteName,
+    request: {},
+    response: {
+      status: 0,
+      headers: {},
+      data: null,
+    },
+  };
 }
 
 async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter): Promise<TestResult> {
@@ -286,7 +337,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
 
     const latency = Date.now() - startTime;
     return {
-      passed,
+      status: passed ? 'passed' : 'failed',
       error: errors.map((e) => `\n\t- ${e}`).join(';'),
       latency,
       requestId,
@@ -304,7 +355,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
     const latency = Date.now() - startTime;
     const isTimeout = error.code === 'ECONNABORTED' || /timeout/i.test(error.message);
     return {
-      passed: false,
+      status: 'failed',
       error: isTimeout ? `Timeout after ${testTimeout}ms` : error.message,
       latency,
       requestId,

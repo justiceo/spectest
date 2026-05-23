@@ -47,8 +47,14 @@ const suite = {
     },
     {
       name: 'Skipped example test',
+      operationId: 'skippedExample',
       endpoint: '/invalid',
       skip: true
+    },
+    {
+      name: 'Failed precondition example test',
+      dependsOn: ['skippedExample'],
+      endpoint: '/invalid'
     },
     {
       name: 'Bombard photos',

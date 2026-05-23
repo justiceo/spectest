@@ -62,8 +62,16 @@ export interface Suite {
   teardown: TestCase[];
 }
 
+export type RuntimeTestCase = TestCase & {
+  dependents: RuntimeTestCase[];
+  unresolvedDependencies: number;
+  failedPrecondition: boolean;
+};
+
+export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition';
+
 export interface TestResult {
-  passed: boolean;
+  status: TestResultStatus;
   error?: string;
   latency: number;
   requestId?: string | null;
@@ -81,7 +89,6 @@ export interface TestResult {
 
 export interface TestRunResult {
   results: TestResult[];
-  skippedTests: TestCase[];
   serverLogs: ServerLog[];
 }
 

@@ -45,12 +45,13 @@ async function runAllTests(cfg: any) {
   const rateLimiter = new RateLimiter(cfg.rps || Infinity);
 
   const testDir = path.resolve(cfg.projectRoot || process.cwd(), cfg.testDir || './test');
-  const files = await readdir(testDir);
+  const entries = await readdir(testDir, { recursive: true, withFileTypes: true });
   const pattern = new RegExp(cfg.filePattern || '\\.(suite|spectest)\\.');
-  const suitePaths = files
-    .filter((f) => pattern.test(f))
-    .sort()
-    .map((f) => path.join(testDir, f));
+  const suitePaths = entries
+    .filter((entry) => entry.isFile() && pattern.test(path.join(entry.parentPath, entry.name)))
+    .map((entry) => path.join(entry.parentPath, entry.name))
+    .sort();
+  console.log("[spectest] Found " + suitePaths.length + " matching test files");
 
   let suites: Suite[] = [];
   for (const p of suitePaths) {

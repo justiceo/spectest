@@ -54,9 +54,7 @@ async function loadSuite(filePath: string): Promise<Suite> {
   }
 
   if (!name) {
-    const base = path.basename(filePath);
-    const parsed = path.parse(base);
-    name = parsed.name.replace(/\.spectest$/, '');
+    name = path.relative(process.cwd(), filePath);
   }
 
   const allTests = [

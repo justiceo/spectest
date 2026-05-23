@@ -162,10 +162,13 @@ That’s where Spectest was born—out of necessity.
 | `randomize` | Shuffle tests ordering before execution | `false` |
 | `happy` | Run only tests expecting 2xx status. Quick filter for testing the happy path. | `false` |
 | `filter` | Regex or smart filter to select tests (`happy`, `failures`) | none |
-| `verbose` | Verbose output with logs | `false` |
+| `testOutput` | Executed test result detail (`summary` or `errors`). Use `errors` to include failed-test server logs and failure reasons in the report. | `summary` |
+| `verbose` | Verbose spectest runner/program output. This is separate from test result detail. | `false` |
 | `userAgent` | Browser User-Agent string to send or one of the predefined [user-agents](https://github.com/justiceo/spectest/blob/main/src/user-agents.ts). | `chrome_windows` |
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` (`--dir`) | Root directory of the project | current working directory |
+
+`testOutput` can also be set from the CLI with `--test-output=summary` or `--test-output=errors`. CLI values override `spectest.config.js`.
 
 
 ## API Testing Tips
@@ -428,5 +431,4 @@ And you can create your own helpers to reduce repetition of common request/respo
 Test cases can be written in `.js`, plain `.json` and `.yaml` files, or `.mjs` for ESM and `.cjs` for CommonJs modules.
 
 Typescript (`.ts`) files are not yet supported, you'd need to transpile them to any of the supported Js modules above.
-
 

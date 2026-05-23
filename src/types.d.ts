@@ -68,6 +68,31 @@ export type RuntimeTestCase = TestCase & {
   failedPrecondition: boolean;
 };
 
+export type TestOutputMode = 'summary' | 'errors';
+
+export interface SpectestConfig {
+  configFile?: string;
+  baseUrl?: string;
+  testDir?: string;
+  filePattern?: string;
+  startCmd?: string;
+  buildCmd?: string;
+  runningServer?: string;
+  tags?: string[];
+  rps?: number;
+  timeout?: number;
+  snapshotFile?: string;
+  randomize?: boolean;
+  happy?: boolean;
+  filter?: string;
+  verbose?: boolean;
+  testOutput?: TestOutputMode;
+  userAgent?: string;
+  proxy?: string;
+  suiteFile?: string;
+  projectRoot?: string;
+}
+
 export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition';
 
 export interface TestResult {

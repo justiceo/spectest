@@ -1,5 +1,5 @@
 import type { Plugin } from '../plugin-api.js';
-import type { TestResult, TestResultStatus } from '../types.js';
+import type { SpectestConfig, TestResult, TestResultStatus } from '../types.js';
 
 function red(text: string): string {
   return `\u001b[31m${text}\u001b[39m`;
@@ -47,8 +47,8 @@ function resultIcon(result: TestResult): string {
   return icons[result.status];
 }
 
-function shouldShowFailureDetails(result: TestResult): boolean {
-  return result.status === 'failed';
+function shouldShowFailureDetails(cfg: SpectestConfig, result: TestResult): boolean {
+  return cfg.testOutput === 'errors' && result.status === 'failed';
 }
 
 export const consoleReporterPlugin = (cfg: any): Plugin => ({
@@ -102,7 +102,7 @@ export const consoleReporterPlugin = (cfg: any): Plugin => ({
         suiteResults.forEach((result) => {
           const icon = resultIcon(result);
           console.log(`  [${icon}] ${result.testName} (${result.latency}ms)`);
-          if (shouldShowFailureDetails(result)) {
+          if (shouldShowFailureDetails(cfg, result)) {
             const requestLogs = result.requestId
               ? serverLogs.filter((log) => log.message.includes(result.requestId!))
               : [];

@@ -1,6 +1,7 @@
 import path from 'path';
 import { existsSync } from 'fs';
 import defaultConfig from './default.config';
+import type { TestOutputMode } from './types';
 
 export interface CliConfig {
   configFile?: string;
@@ -18,13 +19,28 @@ export interface CliConfig {
   happy?: boolean;
   filter?: string;
   verbose?: boolean;
+  testOutput?: TestOutputMode;
   userAgent?: string;
   proxy?: string;
   suiteFile?: string;
   projectRoot?: string;
 }
 
+function parseTestOutput(value: string | undefined): TestOutputMode {
+  if (value === 'summary' || value === 'errors') {
+    return value;
+  }
+  console.error('error: --test-output must be "summary" or "errors"');
+  process.exit(1);
+}
 
+function validateConfiguredTestOutput(value: unknown): asserts value is TestOutputMode {
+  if (value === 'summary' || value === 'errors') {
+    return;
+  }
+  console.error('error: testOutput must be "summary" or "errors"');
+  process.exit(1);
+}
 
 function parseArgs(argv: string[]): CliConfig {
   const args = argv.slice(2);
@@ -87,6 +103,9 @@ function parseArgs(argv: string[]): CliConfig {
         case 'verbose':
           raw.verbose = true;
           break;
+        case 'test-output':
+          raw.testOutput = parseTestOutput(value);
+          break;
         case 'user-agent':
           raw.userAgent = value;
           break;
@@ -146,7 +165,7 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   cfg = { ...cfg, ...restCliOpts };
   cfg.projectRoot = projectRoot;
   cfg.runningServer = (cfg.runningServer as any) || 'reuse';
+  validateConfiguredTestOutput(cfg.testOutput);
 
   return cfg;
 }
-

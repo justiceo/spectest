@@ -8,6 +8,7 @@ export default {
   randomize: false,
   happy: false,
   filter: '',
+  testOutput: 'summary',
   runningServer: 'reuse',
   userAgent: 'chrome_windows',
   proxy: '',

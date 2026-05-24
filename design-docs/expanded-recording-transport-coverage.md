@@ -76,3 +76,34 @@ This will still not make arbitrary protocols semantic. `net` and `tls` replay wi
 - Raw socket replay is byte-stream based, not protocol-aware.
 - Edge support is an explicit fetch wrapper, not automatic runtime patching.
 - `net`/`tls` recording is opt-in because it may capture database/cache/protocol traffic and can be brittle.
+
+
+## Independent Analysis Findings
+
+  1. Line:16 defines createRecordingFetch(options): typeof fetch, but that API is not workable as written. Existing cassette loading/saving is async
+     and file-backed via Node APIs in src/recording-cassette.ts:199 and src/recordings.ts:70. A true edge-runtime helper cannot take only { file, mode } and synchronously return fetch unless it
+     either cannot persist recordings or secretly depends on Node. The design needs a storage model: async factory, injected cassette data, save callback, KV/R2-style adapter, or “Node test harness
+     only” scope.
+  2. Line:19 under-specifies cassette migration. Current entries have no kind and schemaVersion is fixed at 1 in src/recording-cassette.ts:77. Adding
+     typed entries needs a new schema version, backward compatibility rules where old entries imply kind: 'http', and validation/error behavior for mixed or unknown entries.
+  3. Line:36 has a likely double-recording problem. If net/tls interception is enabled alongside http, HTTP/HTTPS/fetch traffic can also appear as raw
+     socket bytes underneath the existing MSW HTTP interceptors in src/recording-preload.ts:104. The design needs precedence rules or suppression markers so HTTP traffic is not recorded once
+     semantically and once as byte stream.
+  4. Line:38 oversimplifies tls.connect() replay. Returning a fake Duplex is not enough for code that expects TLSSocket behavior: secureConnect,
+     authorized, authorizationError, ALPN, SNI, cert APIs, timeout/error ordering, half-close semantics, and stream backpressure can matter. Matching by client byte-stream hash is also awkward
+     because the hash is only known after writes occur, while the fake socket must be returned immediately.
+  5. Line:34 does not cover HTTP/2 multiplexing and session lifecycle. ClientHttp2Session.request() can run concurrent streams over one session,
+     trailers arrive separately, :status lives in headers, and http2.connect() may involve TLS/ALPN. The plan should explicitly model per-stream request/response state and make clear whether session-
+     level events/errors are recorded.
+  6. Line:11 adds recordingTransports but omits the implementation surface needed in this repo: CliConfig/types/default config validation, optional CLI
+     flag semantics, README docs, and probably package export updates. Current config only accepts recording, recordingFile, missingRecordingBehavior, and recordingExcludeUrls in src/config.ts:27.
+  7. Line:27 says to replace direct child IPC with a coordinator, which is directionally correct because current IPC only reaches the directly spawned
+     server process in src/server.ts:60. But the coordinator protocol is too thin: it needs lifecycle, bind address strategy, auth failure behavior, request timeouts, concurrent request handling,
+     shutdown cleanup, and behavior when the coordinator is unavailable.
+  8. Line:40 says to patch spawn, fork, exec, and execFile, but does not define Node-child detection. This is important for npm, pnpm, tsx, shell
+     commands, explicit env overrides, inherited NODE_OPTIONS, and avoiding duplicate --import injection. Current top-level server injection is a simple NODE_OPTIONS append in src/server.ts:210.
+  9. Line:23 notes raw socket capture may include sensitive protocol traffic, but the public API only has URL-based exclusions. recordingExcludeUrls
+     cannot express raw net/tls exclusions. The design needs transport-specific exclude/redaction controls for host/port/servername and probably a stronger warning about credentials in byte streams.
+  10. Line:54 test coverage is missing several high-risk cases: schema v1 cassette replay after migration, config validation/defaults, coordinator
+     timeout/auth/cleanup, HTTP plus raw socket double-interception, concurrent HTTP/2 streams, NODE_OPTIONS preservation/deduplication, child processes with overridden env, edge helper bundling
+     without Node imports, and transport-specific exclusions.

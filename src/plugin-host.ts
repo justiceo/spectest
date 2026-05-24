@@ -1,15 +1,18 @@
-import type { Plugin, SpectestContext } from './plugin-api.js';
+import type { LoadSourceOptions, Plugin, SpectestContext } from './plugin-api.js';
 import type { Suite, TestCase, TestResult, TestRunResult } from './types.js';
 
-type Noop = (...args: any[]) => void;
-
-const noop = () => {};
+type LoadCallback = (args: { path: string; source?: string }) => Promise<{ suites: Suite[] } | null>;
+type LoaderRegistration = {
+  filter: RegExp;
+  source?: string;
+  callback: LoadCallback;
+};
 
 export class PluginHost {
   private plugins: Plugin[] = [];
 
   // Callbacks
-  private onLoadCb: ((args: { path: string }) => Promise<{ suites: Suite[] } | null>) | Noop = noop;
+  private onLoadCbs: LoaderRegistration[] = [];
   private onPrepareCbs: ((suites: Suite[]) => Promise<Suite[]> | Suite[])[] = [];
   private onFetchCbs: ((req: Request) => Promise<Request> | Request)[] = [];
   private onRunStartCbs: ((tests: TestCase[]) => Promise<void> | void)[] = [];
@@ -19,7 +22,11 @@ export class PluginHost {
 
   public context: SpectestContext = {
     onLoad: (options, callback) => {
-      this.onLoadCb = callback;
+      this.onLoadCbs.push({
+        filter: options.filter,
+        source: options.source,
+        callback,
+      });
     },
     onPrepare: (callback) => {
       this.onPrepareCbs.push(callback);
@@ -51,10 +58,22 @@ export class PluginHost {
     }
   }
 
-  public async loadSuites(path: string): Promise<Suite[]> {
-    if (this.onLoadCb === noop) return [];
-    const result = await this.onLoadCb({ path });
-    return result?.suites || [];
+  public async loadSuites(path: string, options: LoadSourceOptions = {}): Promise<Suite[]> {
+    const matchingLoaders = this.onLoadCbs.filter((loader) => {
+      if (options.source) {
+        return loader.source === options.source;
+      }
+      if (loader.source) {
+        return false;
+      }
+      return loader.filter.test(path);
+    });
+    const suites: Suite[] = [];
+    for (const loader of matchingLoaders) {
+      const result = await loader.callback({ path, source: options.source });
+      suites.push(...(result?.suites || []));
+    }
+    return suites;
   }
 
   public async prepareSuites(suites: Suite[]): Promise<Suite[]> {

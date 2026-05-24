@@ -1,0 +1,99 @@
+openapi: 3.0.3
+info:
+  title: JSONPlaceholder OpenAPI Example
+  version: 1.0.0
+paths:
+  /todos/{id}:
+    get:
+      operationId: getTodo
+      summary: Fetch TODO by ID
+      tags:
+        - todos
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: A TODO item
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - id
+                  - title
+                  - completed
+                properties:
+                  id:
+                    type: integer
+                  title:
+                    type: string
+                  completed:
+                    type: boolean
+  /posts:
+    post:
+      operationId: createPostFromOpenApi
+      summary: Create post from OpenAPI
+      tags:
+        - posts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              title: foo
+              body: bar
+              userId: 1
+            schema:
+              type: object
+              required:
+                - title
+                - body
+                - userId
+              properties:
+                title:
+                  type: string
+                body:
+                  type: string
+                userId:
+                  type: integer
+      responses:
+        '201':
+          description: Created post
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - id
+                  - title
+                  - body
+                  - userId
+                properties:
+                  id:
+                    type: integer
+                  title:
+                    type: string
+                  body:
+                    type: string
+                  userId:
+                    type: integer
+  /users/{id}/posts:
+    get:
+      operationId: listUserPostsMissingExample
+      summary: List user posts missing required parameter example
+      tags:
+        - posts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: User posts

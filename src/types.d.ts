@@ -86,6 +86,20 @@ export type RecordingUrlExclusion =
   | RegExp
   | ((url: URL, request: SerializedHttpRequest) => boolean);
 
+export type OpenApiRequestMutation = {
+  headers?: HeadersInit;
+  query?: Record<string, string>;
+  cookies?: Record<string, string>;
+};
+
+export type OpenApiRequestMutator = (ctx: {
+  schemeName: string;
+  scheme: unknown;
+  operation: unknown;
+  method: string;
+  path: string;
+}) => Promise<OpenApiRequestMutation | void> | OpenApiRequestMutation | void;
+
 export interface SpectestConfig {
   configFile?: string;
   baseUrl?: string;
@@ -111,6 +125,9 @@ export interface SpectestConfig {
   recordingFile?: string;
   missingRecordingBehavior?: MissingRecordingBehavior;
   recordingExcludeUrls?: RecordingUrlExclusion[];
+  openapi?: string;
+  openapiServer?: string | number;
+  openapiAuth?: Record<string, OpenApiRequestMutator>;
 }
 
 export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition' | 'cancelled';

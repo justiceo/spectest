@@ -2,6 +2,9 @@ import { existsSync, realpathSync } from 'fs';
 import { readFile, readdir } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import Ajv from 'ajv';
+import Ajv2020 from 'ajv/dist/2020.js';
+import addFormats from 'ajv-formats';
 
 import { HttpClient } from './http-client';
 import { loadConfig } from './config';
@@ -10,6 +13,7 @@ import RateLimiter from './rate-limiter';
 import { resolveUserAgent } from './user-agents';
 import { PluginHost } from './plugin-host';
 import { coreLoaderPlugin } from './plugins/core-loader';
+import { openApiLoaderPlugin } from './plugins/openapi-loader';
 import { coreFilterPlugin } from './plugins/core-filter';
 import { consoleReporterPlugin } from './plugins/console-reporter';
 import { HttpRecordingCassette, type MissingRecordingBehavior, type RecordingMode } from './recording-cassette';
@@ -48,6 +52,7 @@ async function runAllTests(cfg: any) {
 
   const host = new PluginHost([
     coreLoaderPlugin,
+    openApiLoaderPlugin(cfg),
     coreFilterPlugin(cfg),
     consoleReporterPlugin(cfg),
   ]);
@@ -75,8 +80,10 @@ async function runAllTests(cfg: any) {
   const rateLimiter = new RateLimiter(cfg.rps || Infinity);
 
   const testDir = path.resolve(cfg.projectRoot || process.cwd(), cfg.testDir || './test');
-  const entries = await readdir(testDir, { recursive: true, withFileTypes: true });
   const pattern = new RegExp(cfg.filePattern || '\\.(suite|spectest)\\.');
+  const entries = existsSync(testDir)
+    ? await readdir(testDir, { recursive: true, withFileTypes: true })
+    : [];
   const suitePaths = entries
     .filter((entry) => entry.isFile() && pattern.test(path.join(entry.parentPath, entry.name)))
     .map((entry) => path.join(entry.parentPath, entry.name))
@@ -88,6 +95,11 @@ async function runAllTests(cfg: any) {
     const loaded = await host.loadSuites(p);
     suites.push(...loaded);
   }
+  if (cfg.openapi) {
+    const loaded = await host.loadSuites(cfg.openapi, { source: 'openapi' });
+    suites.push(...loaded);
+  }
+  validateUniqueOperationIds(suites.flatMap((s) => [...s.setup, ...s.tests, ...s.teardown]));
 
   suites = await host.prepareSuites(suites);
   const setupTests = suites.flatMap((s) => s.setup);
@@ -318,6 +330,7 @@ async function runAllTests(cfg: any) {
 function createSkippedResult(test: TestCase, status: SkipStatus): TestResult {
   return {
     status,
+    error: test.skipReason,
     latency: 0,
     requestId: null,
     testName: test.name,
@@ -330,6 +343,20 @@ function createSkippedResult(test: TestCase, status: SkipStatus): TestResult {
       data: null,
     },
   };
+}
+
+function validateUniqueOperationIds(tests: TestCase[]): void {
+  const seen = new Map<string, TestCase>();
+  for (const test of tests) {
+    if (!test.operationId) continue;
+    const existing = seen.get(test.operationId);
+    if (existing) {
+      throw new Error(
+        `Duplicate operationId '${test.operationId}' in '${test.name}' and '${existing.name}'`
+      );
+    }
+    seen.set(test.operationId, test);
+  }
 }
 
 function createCancelledResult(test: TestCase, latency: number): TestResult {
@@ -571,6 +598,9 @@ function isCancellationError(error: any, signal?: AbortSignal): boolean {
 }
 
 function validateWithSchema(data, schema) {
+  if (schema?.__spectestJsonSchema) {
+    return validateWithJsonSchema(data, schema.schema, schema.openapiVersion);
+  }
   if (typeof schema.safeParse !== 'function') {
     return { success: false, errors: ['response schema is not a valid zod schema'] };
   }
@@ -579,6 +609,69 @@ function validateWithSchema(data, schema) {
     success: result.success,
     errors: result.success ? [] : result.error.issues.map((i) => i.message),
   };
+}
+
+function validateWithJsonSchema(data, schema, openapiVersion?: string) {
+  try {
+    const jsonSchema = normalizeOpenApiSchema(schema);
+    const ajv = String(openapiVersion || '').startsWith('3.1.')
+      ? new Ajv2020({ allErrors: true, strict: false })
+      : new Ajv({ allErrors: true, strict: false });
+    addFormats(ajv);
+    const validate = ajv.compile(jsonSchema);
+    const success = validate(data);
+    return {
+      success: Boolean(success),
+      errors: success ? [] : (validate.errors || []).map((error) => {
+        const path = error.instancePath || '/';
+        return `${path} ${error.message || 'failed validation'}`;
+      }),
+    };
+  } catch (error) {
+    return { success: false, errors: [error.message || 'invalid JSON schema'] };
+  }
+}
+
+function normalizeOpenApiSchema(schema) {
+  if (!schema || typeof schema !== 'object') {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map((item) => normalizeOpenApiSchema(item));
+  }
+
+  const result: any = {};
+  for (const [key, value] of Object.entries(schema)) {
+    if (
+      key === 'nullable' ||
+      key === 'example' ||
+      key === 'examples' ||
+      key === 'discriminator' ||
+      key === 'xml' ||
+      key === 'externalDocs' ||
+      key === 'deprecated' ||
+      key === 'readOnly' ||
+      key === 'writeOnly'
+    ) {
+      continue;
+    }
+    result[key] = normalizeOpenApiSchema(value);
+  }
+
+  if (schema.nullable === true) {
+    const type = result.type;
+    if (Array.isArray(type)) {
+      result.type = [...new Set([...type, 'null'])];
+    } else if (typeof type === 'string') {
+      result.type = [type, 'null'];
+    } else {
+      const nonNullSchema = { ...result };
+      result.anyOf = [...(Array.isArray(nonNullSchema.anyOf) ? nonNullSchema.anyOf : [nonNullSchema]), { type: 'null' }];
+      delete result.type;
+    }
+  }
+
+  return result;
 }
 
 

@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'child_process';
 import type { HttpRecordingCassette, RecordingDecision, SerializedHttpRequest, SerializedHttpResponse } from './recording-cassette';
+import type { RunningServerMode } from './types.js';
 
 interface RecordingServerConfig {
   enabled: boolean;

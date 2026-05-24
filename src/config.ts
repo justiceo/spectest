@@ -1,7 +1,14 @@
 import path from 'path';
 import { existsSync } from 'fs';
-import defaultConfig from './default.config.ts';
-import type { MissingRecordingBehavior, RecordingMode, RecordingUrlExclusion, TestOutputMode } from './types.ts';
+import defaultConfig from './default.config.js';
+import type {
+  MissingRecordingBehavior,
+  OpenApiRequestMutator,
+  RecordingMode,
+  RecordingUrlExclusion,
+  RunningServerMode,
+  TestOutputMode,
+} from './types.js';
 
 export interface CliConfig {
   configFile?: string;
@@ -28,6 +35,9 @@ export interface CliConfig {
   recordingFile?: string;
   missingRecordingBehavior?: MissingRecordingBehavior;
   recordingExcludeUrls?: RecordingUrlExclusion[];
+  openapi?: string;
+  openapiServer?: string | number;
+  openapiAuth?: Record<string, OpenApiRequestMutator>;
 }
 
 function parseTestOutput(value: string | undefined): TestOutputMode {
@@ -172,6 +182,12 @@ function parseArgs(argv: string[]): CliConfig {
         case 'missing-recording-behavior':
           raw.missingRecordingBehavior = parseMissingRecordingBehavior(value);
           break;
+        case 'openapi':
+          raw.openapi = value;
+          break;
+        case 'openapi-server':
+          raw.openapiServer = value;
+          break;
         case 'dir':
           raw.projectRoot = value;
           break;
@@ -232,6 +248,9 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   validateConfiguredRecordingExcludeUrls(cfg.recordingExcludeUrls);
   if (cfg.recordingFile) {
     cfg.recordingFile = path.resolve(projectRoot, cfg.recordingFile);
+  }
+  if (cfg.openapi) {
+    cfg.openapi = path.resolve(projectRoot, cfg.openapi);
   }
 
   return cfg;

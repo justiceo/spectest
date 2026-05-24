@@ -17,6 +17,7 @@ Spectest is a lightweight API testing CLI for writing declarative HTTP endpoint 
 
 * **Declarative API tests**: describe requests and expected responses with a simple `*.spectest.*` file.
 * **HTTP assertions**: validate status codes, response headers, partial JSON bodies, and Zod or JSON schemas.
+* **OpenAPI loading**: run OpenAPI 3.0/3.1 operations directly with `--openapi`.
 * **API flow testing**: chain login, setup, teardown, and dependent requests with shared response state.
 * **Record and replay**: capture outbound `fetch`, `http`, `https`, and common Node library calls into reusable cassettes.
 * **CLI-first workflow**: run tests with `npx spectest`, filter by tags or names, randomize ordering, and snapshot failures.
@@ -107,6 +108,18 @@ All three commands above will have the same output, and it would look like:
 ⏱️ Testing time: 0.11s; Total time: 0.18s
 ```
 
+### Running OpenAPI documents
+
+Spectest can load OpenAPI 3.0 and 3.1 documents directly:
+
+```bash
+npx spectest --openapi ./examples/openapi/jsonplaceholder.yaml --base-url=https://jsonplaceholder.typicode.com
+```
+
+OpenAPI loading is explicit and does not depend on `testDir` or `filePattern`. Generated tests stay in memory; Spectest does not write `.spectest` files for this workflow.
+
+For v1, Spectest uses examples or schema defaults for required path/query/header/cookie parameters and required JSON request bodies. Operations that need missing values, unsupported media types, unsupported parameter serialization, unresolved external refs, unsupported schema constructs, or unavailable auth hooks are generated as skipped tests with skip reasons.
+
 ## Why Spectest
 While building an API, I kept running into the same frustrating loop: after writing comprehensive Jest tests, I still had to manually “verify” the API by running it through a frontend client.
 
@@ -182,6 +195,9 @@ That’s where Spectest was born—out of necessity.
 | `recordingFile` | JSON cassette path used for HTTP recordings | `.spectest/cassette.json` |
 | `missingRecordingBehavior` | Behavior when replay cannot find a cassette entry (`fail`, `record`, or `bypass`) | `fail` |
 | `recordingExcludeUrls` | URL patterns that always bypass HTTP cassette handling | `[]` |
+| `openapi` | Path to an OpenAPI 3.0/3.1 document to load directly | none |
+| `openapiServer` | Server URL or index to select when an OpenAPI document has multiple `servers` entries | none |
+| `openapiAuth` | Map of OpenAPI security scheme names to request mutation hooks | `{}` |
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` (`--dir`) | Root directory of the project | current working directory |
 

@@ -1,8 +1,15 @@
 import type { Suite, TestCase, TestResult, TestRunResult } from './types';
 
+export interface LoadSourceOptions {
+  source?: string;
+}
+
 export interface SpectestContext {
   // Discovery Phase
-  onLoad(options: { filter: RegExp }, callback: (args: { path: string }) => Promise<{ suites: Suite[] } | null>): void;
+  onLoad(
+    options: { filter: RegExp; source?: string },
+    callback: (args: { path: string; source?: string }) => Promise<{ suites: Suite[] } | null>
+  ): void;
 
   // Preparation Phase: Modify/Filter suites before running
   onPrepare(callback: (suites: Suite[]) => Promise<Suite[]> | Suite[]): void;

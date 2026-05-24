@@ -46,7 +46,23 @@ export class HttpClient {
     );
 
     const controller = new AbortController();
+    let timedOut = false;
+    let externallyAborted = false;
+    let externalAbortHandler: (() => void) | undefined;
+
+    if (options.signal?.aborted) {
+      externallyAborted = true;
+      controller.abort();
+    } else if (options.signal) {
+      externalAbortHandler = () => {
+        externallyAborted = true;
+        controller.abort();
+      };
+      options.signal.addEventListener('abort', externalAbortHandler, { once: true });
+    }
+
     const timeout = setTimeout(() => {
+      timedOut = true;
       controller.abort();
     }, options.timeout || this.timeout);
 
@@ -70,11 +86,19 @@ export class HttpClient {
       };
     } catch (error) {
       if (error.name === 'AbortError') {
+        if (externallyAborted && !timedOut) {
+          const cancellationError = new Error('Request cancelled');
+          cancellationError.name = 'AbortError';
+          throw cancellationError;
+        }
         throw new Error('Request timed out');
       }
       throw error;
     } finally {
       clearTimeout(timeout);
+      if (options.signal && externalAbortHandler) {
+        options.signal.removeEventListener('abort', externalAbortHandler);
+      }
     }
   }
 }

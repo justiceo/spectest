@@ -17,22 +17,24 @@ function gray(text: string): string {
   return `\u001b[90m${text}\u001b[39m`;
 }
 
-function drawProgressBar(passed: number, failed: number, total: number, width: number = 30): string {
+function drawProgressBar(passed: number, failed: number, cancelled: number, total: number, width: number = 30): string {
   if (total === 0) {
     const pendingBar = '░'.repeat(width);
     return `[${pendingBar}]`;
   }
-  const completed = passed + failed;
+  const completed = passed + failed + cancelled;
   const completedWidth = Math.round((completed / total) * width);
   const passedWidth = Math.round((passed / total) * width);
-  const failedWidth = completedWidth - passedWidth;
+  const failedWidth = Math.min(completedWidth - passedWidth, Math.round((failed / total) * width));
+  const cancelledWidth = completedWidth - passedWidth - failedWidth;
   const pendingWidth = width - completedWidth;
 
   const passedBar = green('█'.repeat(passedWidth));
   const failedBar = red('█'.repeat(failedWidth));
+  const cancelledBar = yellow('█'.repeat(cancelledWidth));
   const pendingBar = '░'.repeat(pendingWidth);
 
-  return `[${passedBar}${failedBar}${pendingBar}]`;
+  return `[${passedBar}${failedBar}${cancelledBar}${pendingBar}]`;
 }
 
 function resultIcon(result: TestResult): string {
@@ -43,6 +45,7 @@ function resultIcon(result: TestResult): string {
     failed: '❌',
     skipped: yellow('⏭️ '),
     'failed-precondition': gray('↷ '),
+    cancelled: yellow('⛔'),
   };
   return icons[result.status];
 }
@@ -58,6 +61,7 @@ export const consoleReporterPlugin = (cfg: SpectestConfig): Plugin => ({
     let totalTests = 0;
     let passedTests = 0;
     let failedTests = 0;
+    let cancelledTests = 0;
 
     ctx.onRunStart((tests) => {
       console.log(`🚀 Starting E2E Tests against ${cfg.baseUrl}`);
@@ -71,9 +75,11 @@ export const consoleReporterPlugin = (cfg: SpectestConfig): Plugin => ({
         passedTests++;
       } else if (result.status === 'failed') {
         failedTests++;
+      } else if (result.status === 'cancelled') {
+        cancelledTests++;
       }
-      const progress = passedTests + failedTests;
-      const bar = drawProgressBar(passedTests, failedTests, totalTests);
+      const progress = passedTests + failedTests + cancelledTests;
+      const bar = drawProgressBar(passedTests, failedTests, cancelledTests, totalTests);
       const percentage = ((progress / totalTests) * 100).toFixed(0);
       process.stdout.write(`  Progress: ${bar} ${percentage}% (${progress}/${totalTests})\r`);
     });
@@ -85,6 +91,7 @@ export const consoleReporterPlugin = (cfg: SpectestConfig): Plugin => ({
       const passed = results.filter((r) => r.status === 'passed').length;
       const skipped = results.filter((r) => r.status === 'skipped').length;
       const failedPreconditions = results.filter((r) => r.status === 'failed-precondition').length;
+      const cancelled = results.filter((r) => r.status === 'cancelled').length;
       const total = results.length;
 
       const resultsBySuite = results.reduce((acc, r) => {
@@ -130,7 +137,7 @@ export const consoleReporterPlugin = (cfg: SpectestConfig): Plugin => ({
       const skipSummary = failedPreconditions > 0
         ? `${skipped} skipped, ${failedPreconditions} failed precondition`
         : `${skipped} skipped`;
-      console.log(`✨ Tests completed: ${passed}/${total} passed, ${skipSummary} in ${(totalTestTime / 1000).toFixed(2)}s`);
+      console.log(`✨ Tests completed: ${passed}/${total} passed, ${cancelled} cancelled, ${skipSummary} in ${(totalTestTime / 1000).toFixed(2)}s`);
 
       if (results.length > 0) {
         const latencies = results.map((r) => r.latency).sort((a, b) => a - b);

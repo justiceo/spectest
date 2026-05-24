@@ -113,7 +113,7 @@ export interface SpectestConfig {
   recordingExcludeUrls?: RecordingUrlExclusion[];
 }
 
-export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition';
+export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition' | 'cancelled';
 
 export interface TestResult {
   status: TestResultStatus;

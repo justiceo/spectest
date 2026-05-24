@@ -16,6 +16,14 @@ import { HttpRecordingCassette, type MissingRecordingBehavior, type RecordingMod
 import type { Suite, TestCase, TestResult } from "./types";
 
 type SkipStatus = 'skipped' | 'failed-precondition';
+type ExecutionStatus = 'not-started' | 'running' | 'completed' | 'skipped' | 'cancelled';
+
+class CancellationError extends Error {
+  constructor(message = 'Test run cancelled') {
+    super(message);
+    this.name = 'CancellationError';
+  }
+}
 
 async function runAllTests(cfg: any) {
   const server = new Server();
@@ -89,8 +97,11 @@ async function runAllTests(cfg: any) {
   const tests = [...setupTests, ...mainTests, ...teardownTests];
 
   try {
+    debugLog(cfg, 'server start begin');
     await server.start();
+    debugLog(cfg, 'server start complete');
   } catch (error) {
+    debugLog(cfg, 'server start failed', { error: error?.message });
     console.error('❌ Failed to start server:', error.message);
     process.exit(1);
   }
@@ -100,12 +111,42 @@ async function runAllTests(cfg: any) {
   const results: TestResult[] = [];
   const runtimeSkipped = new Set<any>();
   const executedTests = new Set<TestCase>();
+  const testStatuses = new Map<TestCase, ExecutionStatus>();
+  const testStartTimes = new Map<TestCase, number>();
   const testOrder = new Map<TestCase, number>();
   tests.forEach((test, index) => {
     testOrder.set(test, index);
+    testStatuses.set(test, test.skip ? 'skipped' : 'not-started');
   });
+  const runAbortController = new AbortController();
+  let interrupted = false;
+  let sigintCount = 0;
+  let firstSigintAt: number | null = null;
+  const duplicateSigintWindowMs = 500;
+  const sigintHandler = () => {
+    const now = Date.now();
+    sigintCount += 1;
+    const msSinceFirstSigint = firstSigintAt === null ? null : now - firstSigintAt;
+    debugLog(cfg, 'SIGINT received', {
+      count: sigintCount,
+      alreadyInterrupted: interrupted,
+      signalAborted: runAbortController.signal.aborted,
+      msSinceFirstSigint,
+    });
+    if (interrupted) {
+      if (msSinceFirstSigint !== null && msSinceFirstSigint < duplicateSigintWindowMs) {
+        return;
+      }
+      process.exit(130);
+    }
+    interrupted = true;
+    firstSigintAt = now;
+    runAbortController.abort(new CancellationError());
+  };
 
-  async function runTests(testCases: TestCase[]): Promise<boolean> {
+  process.on('SIGINT', sigintHandler);
+
+  async function runTests(phaseName: string, testCases: TestCase[], signal?: AbortSignal): Promise<boolean> {
     const phaseResults: TestResult[] = [];
     const opIdMap = new Map<string, TestCase>();
     testCases.forEach((t) => {
@@ -134,14 +175,32 @@ async function runAllTests(cfg: any) {
 
     const scheduled = new Set<any>();
     async function schedule(test: TestCase): Promise<void> {
-      if (test.skip || scheduled.has(test) || (test as any).__runtimeSkip) return;
+      if (test.skip || scheduled.has(test) || (test as any).__runtimeSkip) {
+        return;
+      }
+      if (signal?.aborted) {
+        return;
+      }
       scheduled.add(test);
 
+      testStatuses.set(test, 'running');
+      testStartTimes.set(test, Date.now());
       await host.dispatchTestStart(test);
-      const result = await runTest(test, api, testState, server, rateLimiter, cfg);
+      if (signal?.aborted) {
+        const result = createCancelledResult(test, Date.now() - (testStartTimes.get(test) || Date.now()));
+        results.push(result);
+        phaseResults.push(result);
+        executedTests.add(test);
+        testStatuses.set(test, 'cancelled');
+        await host.dispatchTestEnd(test, result);
+        return;
+      }
+
+      const result = await runTest(test, api, testState, server, rateLimiter, cfg, signal);
       results.push(result);
       phaseResults.push(result);
       executedTests.add(test);
+      testStatuses.set(test, result.status === 'cancelled' ? 'cancelled' : 'completed');
 
       if (result.status === 'passed') {
         if (!testState.completedCases[result.operationId]) {
@@ -158,7 +217,7 @@ async function runAllTests(cfg: any) {
 
       await host.dispatchTestEnd(test, result);
 
-      if (result.status === 'passed') {
+      if (result.status === 'passed' && !signal?.aborted) {
         const readyDependents = (test as any).dependents.filter((d: any) => {
           d.unresolvedDependencies -= 1;
           return d.unresolvedDependencies === 0 && !d.__runtimeSkip;
@@ -173,28 +232,39 @@ async function runAllTests(cfg: any) {
 
     await Promise.all(initialPromises);
     testCases.forEach((test) => {
-      if (!test.skip && !executedTests.has(test)) {
+      if (!test.skip && !executedTests.has(test) && !signal?.aborted) {
         runtimeSkipped.add(test);
       }
     });
-    return testCases.every((test) => {
+    if (signal?.aborted) {
+      debugLog(cfg, 'synthesizing cancellations after aborted phase', {
+        phase: phaseName,
+      });
+      await synthesizeCancelledResults(testCases);
+    }
+    const phasePassed = testCases.every((test) => {
       return test.skip || (executedTests.has(test) && !runtimeSkipped.has(test));
     }) && phaseResults.every((r) => r.status === 'passed');
+    return phasePassed;
   }
 
   try {
-    const setupPassed = await runTests(setupTests);
-    if (setupPassed) {
-      await runTests(mainTests);
+    const setupPassed = await runTests('setup', setupTests, runAbortController.signal);
+    if (setupPassed && !runAbortController.signal.aborted) {
+      await runTests('main', mainTests, runAbortController.signal);      
     } else {
       mainTests.forEach((test) => {
-        if (!test.skip) {
+        if (!test.skip && !runAbortController.signal.aborted) {
           runtimeSkipped.add(test);
         }
       });
+      if (runAbortController.signal.aborted) {
+        debugLog(cfg, 'synthesizing main cancellations because setup/main signal aborted');
+        await synthesizeCancelledResults(mainTests);
+      }
     }
   } finally {
-    await runTests(teardownTests);
+    await runTests('teardown', teardownTests);
     await server.stop();
     if (recordingCassette) {
       await recordingCassette.save();
@@ -217,8 +287,26 @@ async function runAllTests(cfg: any) {
       serverLogs: server.getLogs(),
     });
 
+    process.off('SIGINT', sigintHandler);
     const passed = finalResults.every((r) => r.status !== 'failed');
-    process.exit(passed ? 0 : 1);
+    process.exit(interrupted ? 130 : passed ? 0 : 1);
+  }
+
+  async function synthesizeCancelledResults(testCases: TestCase[]): Promise<void> {
+    let synthesized = 0;
+    for (const test of testCases) {
+      const status = testStatuses.get(test);
+      if (test.skip || executedTests.has(test) || status === 'completed' || status === 'cancelled') {
+        continue;
+      }
+      const startedAt = testStartTimes.get(test);
+      const result = createCancelledResult(test, startedAt ? Date.now() - startedAt : 0);
+      results.push(result);
+      executedTests.add(test);
+      testStatuses.set(test, 'cancelled');
+      synthesized += 1;
+      await host.dispatchTestEnd(test, result);
+    }
   }
 
   function resultOrder(result: TestResult): number | undefined {
@@ -244,6 +332,30 @@ function createSkippedResult(test: TestCase, status: SkipStatus): TestResult {
   };
 }
 
+function createCancelledResult(test: TestCase, latency: number): TestResult {
+  return {
+    status: 'cancelled',
+    error: 'Cancelled by user',
+    latency,
+    requestId: null,
+    testName: test.name,
+    operationId: test.operationId,
+    suiteName: test.suiteName,
+    request: {},
+    response: {
+      status: 0,
+      headers: {},
+      data: null,
+    },
+  };
+}
+
+function debugLog(cfg: any, message: string, details?: Record<string, any>): void {
+  if (!cfg?.verbose) return;
+  const suffix = details ? ` ${JSON.stringify(details)}` : '';
+  console.error(`[spectest:debug] ${new Date().toISOString()} ${message}${suffix}`);
+}
+
 async function getSpectestVersion(): Promise<string> {
   try {
     const packageJsonUrl = new URL('../package.json', import.meta.url);
@@ -258,12 +370,7 @@ function resolveRecordingMode(test: TestCase, cfg: any): RecordingMode {
   return test.recording || cfg.recording;
 }
 
-async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter, cfg: any): Promise<TestResult> {
-    if (typeof test.delay === 'number' && test.delay > 0) {
-    await new Promise((resolve) => {
-      setTimeout(resolve, test.delay);
-    });
-  }
+async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter, cfg: any, signal?: AbortSignal): Promise<TestResult> {
   const startTime = Date.now();
   let requestId: string | null = null;
   if (test.request?.headers) {
@@ -279,6 +386,12 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       ? test.timeout
       : api.getTimeout();
   try {
+    throwIfCancelled(signal);
+    if (typeof test.delay === 'number' && test.delay > 0) {
+      await abortableDelay(test.delay, signal);
+    }
+    throwIfCancelled(signal);
+
     let config = {
       method: test.request?.method || 'GET',
       url: test.endpoint,
@@ -296,6 +409,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       const updatedConfig = await test.beforeSend(config, immutableState);
       if (updatedConfig) config = updatedConfig;
     }
+    throwIfCancelled(signal);
 
     if (cfg.recording !== 'off') {
       config.headers = { ...config.headers };
@@ -306,8 +420,9 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       config.headers['x-spectest-missing-recording-behavior'] = cfg.missingRecordingBehavior as MissingRecordingBehavior;
     }
 
-    await rateLimiter.acquire();
-    const response = await api.request({ ...config, timeout: testTimeout });
+    await rateLimiter.acquire(signal);
+    throwIfCancelled(signal);
+    const response = await api.request({ ...config, timeout: testTimeout, signal });
 
     const sessionCookie = response.headers.get('set-cookie') ?? "";
     if (sessionCookie) {
@@ -320,6 +435,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
         : [];
       await test.postTest(response, testState, { requestId, logs: requestLogs });
     }
+    throwIfCancelled(signal);
 
     let passed = true;
     const expectedResponse = test.response || {};
@@ -399,6 +515,9 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
     };
   } catch (error) {
     const latency = Date.now() - startTime;
+    if (isCancellationError(error, signal)) {
+      return createCancelledResult(test, latency);
+    }
     const isTimeout = error.code === 'ECONNABORTED' || /timeout/i.test(error.message);
     return {
       status: 'failed',
@@ -417,6 +536,38 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       }
     };
   }
+}
+
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new CancellationError());
+  }
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', abortHandler);
+      resolve();
+    }, ms);
+    const abortHandler = () => {
+      clearTimeout(timeout);
+      reject(new CancellationError());
+    };
+    signal?.addEventListener('abort', abortHandler, { once: true });
+  });
+}
+
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new CancellationError();
+  }
+}
+
+function isCancellationError(error: any, signal?: AbortSignal): boolean {
+  return Boolean(
+    signal?.aborted &&
+      (error instanceof CancellationError ||
+        error?.name === 'AbortError' ||
+        /cancelled|canceled/i.test(error?.message || ''))
+  );
 }
 
 function validateWithSchema(data, schema) {

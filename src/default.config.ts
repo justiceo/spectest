@@ -1,3 +1,5 @@
+import type { SpectestConfig } from './types';
+
 export default {
   startCmd: 'npm run start',
   baseUrl: 'https://localhost:8080',
@@ -16,4 +18,4 @@ export default {
   recordingFile: '.spectest/cassette.json',
   missingRecordingBehavior: 'fail',
   recordingExcludeUrls: [],
-};
+} satisfies SpectestConfig;

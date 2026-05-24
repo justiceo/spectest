@@ -1,20 +1,31 @@
 {
   "name": "spectest",
   "version": "2.0.3",
-  "description": "Declarative API testing that is fast and simple",
+  "description": "Declarative API testing CLI for fast HTTP endpoint and REST API tests",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
+    "build": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
+    "build:prod": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
     "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com"
   },
   "keywords": [
-    "api",
-    "tests",
-    "testing",
-    "declarative",
-    "http-testing",
     "api-testing",
-    "cli"
+    "http-testing",
+    "rest-api",
+    "rest-testing",
+    "endpoint-testing",
+    "contract-testing",
+    "integration-testing",
+    "test-runner",
+    "cli",
+    "declarative",
+    "schema-validation",
+    "json-schema",
+    "zod",
+    "record-replay",
+    "http-recording",
+    "load-testing",
+    "nodejs"
   ],
   "repository": {
     "type": "git",
@@ -40,7 +51,7 @@
     "./recordings": "./dist/recordings.js"
   },
   "devDependencies": {
-    "@types/node": "^20.14.9",
+    "@types/node": "^20.19.41",
     "typescript": "^5.5.3"
   }
 }

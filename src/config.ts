@@ -1,7 +1,7 @@
 import path from 'path';
 import { existsSync } from 'fs';
-import defaultConfig from './default.config';
-import type { MissingRecordingBehavior, RecordingMode, RecordingUrlExclusion, TestOutputMode } from './types';
+import defaultConfig from './default.config.ts';
+import type { MissingRecordingBehavior, RecordingMode, RecordingUrlExclusion, TestOutputMode } from './types.ts';
 
 export interface CliConfig {
   configFile?: string;
@@ -64,6 +64,12 @@ function parseMissingRecordingBehavior(value: string | undefined): MissingRecord
   process.exit(1);
 }
 
+function parseRunningServer(value: string | undefined): RunningServerMode {
+  if (value === 'reuse' || value === 'fail' || value === 'kill') return value;
+  console.error('error: --running-server must be "reuse", "fail", or "kill"');
+  process.exit(1);
+}
+
 function validateConfiguredMissingRecordingBehavior(value: unknown): asserts value is MissingRecordingBehavior {
   if (value === 'fail' || value === 'record' || value === 'bypass') return;
   console.error('error: missingRecordingBehavior must be "fail", "record", or "bypass"');
@@ -119,7 +125,7 @@ function parseArgs(argv: string[]): CliConfig {
           raw.buildCmd = value;
           break;
         case 'running-server':
-          raw.runningServer = value;
+          raw.runningServer = parseRunningServer(value);
           break;
         case 'tags':
           raw.tags = value ? value.split(',').map((t) => t.trim()).filter(Boolean) : [];

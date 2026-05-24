@@ -2,7 +2,7 @@ class RateLimiter {
   private capacity: number;
   private tokens: number;
   private queue: Array<() => void> = [];
-  private intervalId: NodeJS.Timer | null = null;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
 
   constructor(rps: number) {
     if (!rps || rps <= 0 || !Number.isFinite(rps)) {

@@ -71,6 +71,7 @@ export type RuntimeTestCase = TestCase & {
 };
 
 export type TestOutputMode = 'summary' | 'errors';
+export type RunningServerMode = 'reuse' | 'fail' | 'kill';
 export type RecordingMode = 'off' | 'replay' | 'record';
 export type MissingRecordingBehavior = 'fail' | 'record' | 'bypass';
 export interface SerializedHttpRequest {
@@ -92,7 +93,7 @@ export interface SpectestConfig {
   filePattern?: string;
   startCmd?: string;
   buildCmd?: string;
-  runningServer?: string;
+  runningServer?: RunningServerMode;
   tags?: string[];
   rps?: number;
   timeout?: number;

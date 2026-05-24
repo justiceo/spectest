@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import type { Plugin } from '../plugin-api.js';
-import type { Suite, TestCase } from '../types.js';
+import type { SpectestConfig, Suite, TestCase } from '../types.js';
 
 function expandRepeats(tests: TestCase[]) {
   return tests.flatMap((test) => {
@@ -89,7 +89,7 @@ function filterTestsByFailures(tests: TestCase[], snapshotPath?: string) {
   }
 }
 
-function shuffle(arr: any[]) {
+function shuffle<T>(arr: T[]) {
   for (let i = arr.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [arr[i], arr[j]] = [arr[j], arr[i]];
@@ -117,7 +117,7 @@ function toSnakeCase(text: string): string {
   return result;
 }
 
-export const coreFilterPlugin = (cfg: any): Plugin => ({
+export const coreFilterPlugin = (cfg: SpectestConfig): Plugin => ({
   name: 'core-filter',
   setup(ctx) {
     ctx.onPrepare(async (suites) => {

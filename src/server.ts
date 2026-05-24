@@ -14,7 +14,7 @@ class Server {
   private buildCommand?: string;
   private startCommand = 'npm run start';
   private serverUrl = 'http://localhost:8080';
-  private runningServer: 'reuse' | 'fail' | 'kill' = 'reuse';
+  private runningServer: RunningServerMode = 'reuse';
   private recording: RecordingServerConfig = { enabled: false };
 
   private debug(message: string, details?: Record<string, unknown>): void {
@@ -39,7 +39,7 @@ class Server {
     startCommand?: string;
     buildCmd?: string;
     serverUrl?: string;
-    runningServer?: 'reuse' | 'fail' | 'kill';
+    runningServer?: RunningServerMode;
     recording?: RecordingServerConfig;
   } = {}): void {
     if (cfg.startCommand) this.setStartCommand(cfg.startCommand);

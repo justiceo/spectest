@@ -51,7 +51,7 @@ function shouldShowFailureDetails(cfg: SpectestConfig, result: TestResult): bool
   return cfg.testOutput === 'errors' && result.status === 'failed';
 }
 
-export const consoleReporterPlugin = (cfg: any): Plugin => ({
+export const consoleReporterPlugin = (cfg: SpectestConfig): Plugin => ({
   name: 'console-reporter',
   setup(ctx) {
     let testStartTime: number;

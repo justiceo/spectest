@@ -1,7 +1,8 @@
 <div align="center">
   <img alt="spectest logo" src="https://github.com/justiceo/spectest/blob/main/assets/spectest-logo.png?raw=true" width="800px" />
 
-  <h3 style="font-family: monospace; font-weight: 200;">api testing + truly declarative x lightning fast & absurdly simple </h3><br>
+  <h1>Spectest</h1>
+  <h3 style="font-family: monospace; font-weight: 200;">declarative API testing CLI for fast HTTP endpoint tests</h3><br>
 
 [![Build](https://github.com/justiceo/spectest/actions/workflows/build.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/build.yml) 
 [![Test](https://github.com/justiceo/spectest/actions/workflows/test.yml/badge.svg)](https://github.com/justiceo/spectest/actions/workflows/test.yml) 
@@ -9,6 +10,17 @@
 [![License](https://img.shields.io/npm/l/spectest.svg)](https://github.com/justiceo/spectest/blob/main/LICENSE)
 
 </div>
+
+Spectest is a lightweight API testing CLI for writing declarative HTTP endpoint tests in JavaScript, JSON, or YAML. Use it to verify REST APIs, assert status codes, headers, JSON payloads, and schemas, test multi-step API flows, replay recorded outbound HTTP calls, and run concurrency or load checks without a browser automation framework.
+
+## Features
+
+* **Declarative API tests**: describe requests and expected responses with a simple `*.spectest.*` file.
+* **HTTP assertions**: validate status codes, response headers, partial JSON bodies, and Zod or JSON schemas.
+* **API flow testing**: chain login, setup, teardown, and dependent requests with shared response state.
+* **Record and replay**: capture outbound `fetch`, `http`, `https`, and common Node library calls into reusable cassettes.
+* **CLI-first workflow**: run tests with `npx spectest`, filter by tags or names, randomize ordering, and snapshot failures.
+* **Concurrency and load checks**: send tests in parallel, rate-limit requests, or bombard endpoints to check API robustness.
 
 ## Getting Started
 

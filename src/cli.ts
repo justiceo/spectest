@@ -51,7 +51,7 @@ async function runAllTests(cfg: any) {
   };
 
   const host = new PluginHost([
-    coreLoaderPlugin,
+    coreLoaderPlugin(cfg),
     openApiLoaderPlugin(cfg),
     coreFilterPlugin(cfg),
     consoleReporterPlugin(cfg),

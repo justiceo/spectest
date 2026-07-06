@@ -2,7 +2,7 @@ import { readFile } from 'fs/promises';
 import path from 'path';
 import { load as parseYaml } from 'js-yaml';
 import type { Plugin } from '../plugin-api.js';
-import type { Suite, TestCase } from '../types.js';
+import type { Suite, SpectestConfig, TestCase } from '../types.js';
 
 async function loadSuite(filePath: string): Promise<Suite> {
   let tests: TestCase[] = [];
@@ -70,12 +70,13 @@ async function loadSuite(filePath: string): Promise<Suite> {
   return { name, tests: finalMain, setup: finalSetup, teardown: finalTeardown, loadPath: filePath };
 }
 
-export const coreLoaderPlugin: Plugin = {
+export const coreLoaderPlugin = (cfg: SpectestConfig): Plugin => ({
   name: 'core-loader',
   setup(ctx) {
-    ctx.onLoad({ filter: /\.(suite|spectest)\.(js|ts|mjs|cjs|json|yaml|yml)$/ }, async ({ path }) => {
+    const filter = new RegExp(cfg.filePattern || '\\.(suite|spectest)\\.(js|ts|mjs|cjs|json|yaml|yml)$');
+    ctx.onLoad({ filter }, async ({ path }) => {
       const suite = await loadSuite(path);
       return { suites: [suite] };
     });
   },
-};
+});

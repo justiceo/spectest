@@ -100,12 +100,61 @@ function validateConfiguredRecordingExcludeUrls(value: unknown): asserts value i
   }
 }
 
+const HELP_OPTIONS: [string, string][] = [
+  ['--config <file>', 'Path to an extra config file'],
+  ['--base-url <url>', 'Base URL of the API (default: http://localhost:3000)'],
+  ['--test-dir <dir>', 'Directory containing test suites (default: ./test)'],
+  ['--file-pattern <regex>', 'Regex for suite filenames (default: \\.spectest\\.)'],
+  ['--start-cmd <cmd>', 'Command to start the test server (default: npm run start)'],
+  ['--build-cmd <cmd>', 'Command to build the test server'],
+  ['--running-server <mode>', "Handling for an existing server: reuse, fail, kill (default: reuse)"],
+  ['--tags <tag1,tag2>', 'Comma-separated tags used for filtering tests'],
+  ['--rps <number>', 'Requests per second rate limit (default: Infinity)'],
+  ['--timeout <ms>', 'Default request timeout in milliseconds (default: 60000)'],
+  ['--snapshot <file>', 'Path to write a snapshot file'],
+  ['--randomize', 'Shuffle test ordering before execution'],
+  ['--happy', 'Run only tests expecting a 2xx status'],
+  ['--filter <pattern>', 'Regex or smart filter to select tests (happy, failures)'],
+  ['--test-output <mode>', 'Test result detail: summary or errors (default: summary)'],
+  ['--verbose', 'Verbose spectest runner/program output'],
+  ['--user-agent, --ua <name>', 'Browser User-Agent string or predefined name (default: chrome_windows)'],
+  ['--proxy <url>', 'Proxy URL to route requests through'],
+  ['--recording <mode>', 'HTTP recording mode: off, replay, record (default: off)'],
+  ['--recording-file <path>', 'JSON cassette path for HTTP recordings (default: .spectest/cassette.json)'],
+  ['--missing-recording-behavior <mode>', "Behavior when replay can't find a cassette entry: fail, record, bypass (default: fail)"],
+  ['--openapi <path>', 'Path to an OpenAPI 3.0/3.1 document to load directly'],
+  ['--openapi-server <url|index>', 'Server URL or index to select from an OpenAPI document'],
+  ['--dir <path>', 'Root directory of the project (default: current working directory)'],
+  ['-h, --help', 'Show this help message and exit'],
+];
+
+function printHelp(): void {
+  const columnWidth = Math.max(...HELP_OPTIONS.map(([flag]) => flag.length)) + 2;
+  const optionLines = HELP_OPTIONS.map(([flag, desc]) => `  ${flag.padEnd(columnWidth)}${desc}`).join('\n');
+  console.log(`Usage: spectest [options] [suiteFile]
+
+Declarative API testing CLI for fast HTTP endpoint and REST API tests.
+
+Options:
+${optionLines}
+
+Examples:
+  spectest --base-url=https://api.example.com
+  spectest --openapi ./openapi.yaml --base-url=https://api.example.com
+  spectest --tags=smoke,auth ./test/auth.spectest.js
+`);
+}
+
 function parseArgs(argv: string[]): CliConfig {
   const args = argv.slice(2);
   const raw: CliConfig = {};
   let i = 0;
   while (i < args.length) {
     const arg = args[i];
+    if (arg === '-h' || arg === '--help') {
+      printHelp();
+      process.exit(0);
+    }
     if (arg.startsWith('--')) {
       let [key, value] = arg.slice(2).split('=');
       if (typeof value === 'undefined') {

@@ -145,19 +145,37 @@ class Server {
   }
 
   async stop(): Promise<void> {
-    if (this.serverProcess && this.startedByHelper) {
+    if (!this.serverProcess || !this.startedByHelper) return;
+
+    const proc = this.serverProcess;
+    this.serverProcess = null;
+    this.startedByHelper = false;
+
+    if (proc.exitCode === null && proc.signalCode === null) {
       console.log('📋 Stopping server...');
-      this.serverProcess.kill('SIGTERM');
-
-      setTimeout(() => {
-        if (this.serverProcess && !this.serverProcess.killed) {
+      await new Promise<void>((resolve) => {
+        const forceKillTimer = setTimeout(() => {
           console.log('📋 Force killing server...');
-          this.serverProcess.kill('SIGKILL');
-        }
-      }, 5000);
+          proc.kill('SIGKILL');
+        }, 5000);
 
-      this.serverProcess = null;
-      this.startedByHelper = false;
+        proc.once('exit', () => {
+          clearTimeout(forceKillTimer);
+          resolve();
+        });
+
+        proc.kill('SIGTERM');
+      });
+    }
+
+    // startCommand is often a wrapper like "npm run start", which spawns the
+    // real server as a child of its own. Killing the wrapper (especially via
+    // SIGKILL, which can never be forwarded) doesn't guarantee the actual
+    // server process dies with it, leaving it bound to the port. Confirm the
+    // port is actually free, and if not, reap whoever is holding it directly.
+    if (await this.isRunning()) {
+      const port = new URL(this.serverUrl).port || '8080';
+      this.killProcessOnPort(port);
     }
   }
 

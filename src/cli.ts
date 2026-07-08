@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from 'fs';
-import { readFile, readdir } from 'fs/promises';
+import { readFile, readdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Ajv from 'ajv';
@@ -16,8 +16,10 @@ import { coreLoaderPlugin } from './plugins/core-loader';
 import { openApiLoaderPlugin } from './plugins/openapi-loader';
 import { coreFilterPlugin } from './plugins/core-filter';
 import { consoleReporterPlugin } from './plugins/console-reporter';
+import { buildCoverageReport, formatCoverageReport } from './coverage-report';
 import { HttpRecordingCassette, type MissingRecordingBehavior, type RecordingMode } from './recording-cassette';
 import type { Suite, TestCase, TestResult } from "./types";
+import { runGenerateCommand } from './generate-command';
 
 type SkipStatus = 'skipped' | 'failed-precondition';
 type ExecutionStatus = 'not-started' | 'running' | 'completed' | 'skipped' | 'cancelled';
@@ -299,6 +301,10 @@ async function runAllTests(cfg: any) {
       serverLogs: server.getLogs(),
     });
 
+    if (cfg.coverageReport) {
+      await emitCoverageReport(cfg, tests, finalResults);
+    }
+
     process.off('SIGINT', sigintHandler);
     const passed = finalResults.every((r) => r.status !== 'failed');
     process.exit(interrupted ? 130 : passed ? 0 : 1);
@@ -375,6 +381,25 @@ function createCancelledResult(test: TestCase, latency: number): TestResult {
       data: null,
     },
   };
+}
+
+async function emitCoverageReport(cfg: any, tests: TestCase[], results: TestResult[]): Promise<void> {
+  if (!cfg.openapi) {
+    console.error('[spectest] --coverage-report requires --openapi to be set; skipping');
+    return;
+  }
+  try {
+    const rows = await buildCoverageReport(cfg.openapi, tests, results);
+    const report = formatCoverageReport(rows);
+    if (cfg.coverageReportFile) {
+      await writeFile(cfg.coverageReportFile, `${report}\n`, 'utf8');
+      console.log(`[spectest] Coverage report written to ${cfg.coverageReportFile}`);
+    } else {
+      console.log(`\n[spectest] OpenAPI contract coverage:\n${report}`);
+    }
+  } catch (error) {
+    console.error('[spectest] Failed to generate coverage report:', (error as Error).message);
+  }
 }
 
 function debugLog(cfg: any, message: string, details?: Record<string, any>): void {
@@ -676,7 +701,14 @@ function normalizeOpenApiSchema(schema) {
 
 
 if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {
-  loadConfig(process.argv).then((cfg) => {
-    runAllTests(cfg).catch(console.error);
-  });
+  if (process.argv[2] === 'generate') {
+    runGenerateCommand(process.argv).catch((error) => {
+      console.error(error);
+      process.exit(1);
+    });
+  } else {
+    loadConfig(process.argv).then((cfg) => {
+      runAllTests(cfg).catch(console.error);
+    });
+  }
 }

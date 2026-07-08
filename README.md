@@ -116,9 +116,99 @@ Spectest can load OpenAPI 3.0 and 3.1 documents directly:
 npx spectest --openapi ./examples/openapi/jsonplaceholder.yaml --base-url=https://jsonplaceholder.typicode.com
 ```
 
-OpenAPI loading is explicit and does not depend on `testDir` or `filePattern`. Generated tests stay in memory; Spectest does not write `.spectest` files for this workflow.
+Generated tests stay in memory; Spectest does not write `.spectest` files for this workflow (see `spectest generate openapi-tests` below if you want a written scaffold instead). Spectest uses examples or schema defaults for required path/query/header/cookie parameters and required JSON request bodies. Operations that need missing values, unsupported media types, unsupported parameter serialization, unresolved external refs, unsupported schema constructs, or unavailable auth/hook lookups are generated as skipped tests with skip reasons.
 
-For v1, Spectest uses examples or schema defaults for required path/query/header/cookie parameters and required JSON request bodies. Operations that need missing values, unsupported media types, unsupported parameter serialization, unresolved external refs, unsupported schema constructs, or unavailable auth hooks are generated as skipped tests with skip reasons.
+When both `--openapi` and `testDir` are configured, Spectest loads OpenAPI-generated tests and hand-written suites into the same run and dependency graph — a hand-written suite can `dependsOn` a spec-generated `operationId`, and duplicate `operationId`s across the two sources fail fast via the same uniqueness check.
+
+#### Multiple examples per operation
+
+If a request body, parameter, or response defines an `examples` map (rather than a single `example`), Spectest generates one test per entry. Each generated test's `operationId` becomes `${operationId}+${exampleKey}` and its name gets a ` — ${exampleKey}` suffix.
+
+The expected response for a given request example is resolved in order:
+1. `x-spectest.status` declared on that example.
+2. A response example under a documented non-2xx status sharing the same key as the request example.
+3. The lowest documented `2xx` status (the v1 default).
+
+An operation with no `examples` map behaves exactly as before (a single generated test, unsuffixed `operationId`).
+
+#### `x-spectest` vendor extension
+
+A single vendor extension, allowed on an operation and on an individual entry inside an `examples` map (example-level overrides operation-level):
+
+```yaml
+x-spectest:
+  status: 400
+  tags: [slow, real-backend]
+  skip: true
+  skipReason: "hits real registrar, run manually"
+  phase: setup | main | teardown
+  dependsOn: [operationId, "otherOperationId+exampleKey"]
+  beforeSend: hookName        # looked up in cfg.openapiHooks
+  postTest: hookName
+  security: none | variantName
+  generate:                   # dynamic values, see below
+    orderId: uuid
+    "product.domainName": shortId
+```
+
+#### Named hook registry
+
+Add `openapiHooks` to `spectest.config.js` to give `x-spectest.beforeSend`/`postTest` something to resolve against:
+
+```js
+export default {
+  openapiHooks: {
+    extractOneTimeToken: {
+      postTest: async (res, state, ctx) => { /* scrape ctx.logs, stash in state */ },
+    },
+  },
+};
+```
+
+A name referenced by `x-spectest` that isn't in `openapiHooks` generates a skipped test with a reason, the same way a missing `openapiAuth` hook does — it never crashes the loader.
+
+#### Dynamic example values
+
+Use `{{uuid}}`, `{{timestamp}}`, or `{{shortId}}` as a literal example string to get a fresh value resolved once per generated test (stable across `repeat`/`bombard` reruns of that same test). For object bodies, `x-spectest.generate` is the path-keyed alternative — list which fields need freshness per run instead of rewriting the example. Both are opt-in; Spectest still never synthesizes data for a property that has no example.
+
+#### Explicit non-default auth cases
+
+`openapiAuth` entries can be either a single hook (as in v1) or a named-variant map, to let you deliberately generate a test with missing/expired credentials:
+
+```js
+export default {
+  openapiAuth: {
+    session: {
+      valid: async (ctx) => ({ headers: { Cookie: 'session=...' } }),
+      expired: async (ctx) => ({ headers: { Cookie: 'session=expired' } }),
+      missing: async () => ({}),
+    },
+  },
+};
+```
+
+Set `x-spectest.security: none` to bypass security application entirely for an example, or `x-spectest.security: expired` (etc.) to pick a variant. With no override, a variant map defaults to its `valid` entry.
+
+#### Native `links` for chaining
+
+Standard OpenAPI `responses.<status>.links` are honored for simple data-passing chains (e.g. register something, then fetch it using the `orderId` from the first response). When operation B has an unresolved parameter or request body and an earlier operation A declares a link targeting B by `operationId`, Spectest auto-generates `dependsOn: [A]` plus a `beforeSend` that reads the linked value from `state.completedCases[A]` via the link's runtime expression (`$response.body#/pointer` or `$response.header.<name>`). This only applies when A itself resolves to exactly one generated test; if A was split by multiple examples, use `x-spectest.dependsOn` + `beforeSend`/hooks instead.
+
+#### Contract coverage reporting
+
+```bash
+npx spectest --openapi ./openapi.yaml --coverage-report
+npx spectest --openapi ./openapi.yaml --coverage-report --coverage-report-file ./coverage.txt
+```
+
+After the run, prints one line per spec operation: `generated & passed`, `generated & failed`, `generated & skipped (<reason>)`, `covered by hand-written test <operationId>` (when a hand-written suite's request matches that operation's method/path but no generated test ran for it), or `uncovered`.
+
+#### Scaffolding editable test files
+
+```bash
+npx spectest generate openapi-tests --openapi ./openapi.yaml --output ./test
+```
+
+Writes a `.spectest.js` file with the same generated tests Spectest would run in-memory, as an editable starting point for suites that will grow real `beforeSend`/`postTest` logic by hand. Anything expressible this way is already expressible via direct `--openapi` loading — this is a convenience/onboarding command, not a coverage unlock.
 
 ## Why Spectest
 While building an API, I kept running into the same frustrating loop: after writing comprehensive Jest tests, I still had to manually “verify” the API by running it through a frontend client.
@@ -197,7 +287,10 @@ That’s where Spectest was born—out of necessity.
 | `recordingExcludeUrls` | URL patterns that always bypass HTTP cassette handling | `[]` |
 | `openapi` | Path to an OpenAPI 3.0/3.1 document to load directly | none |
 | `openapiServer` | Server URL or index to select when an OpenAPI document has multiple `servers` entries | none |
-| `openapiAuth` | Map of OpenAPI security scheme names to request mutation hooks | `{}` |
+| `openapiAuth` | Map of OpenAPI security scheme names to request mutation hooks, or to a named-variant map (`{ valid, expired, ... }`) | `{}` |
+| `openapiHooks` | Map of hook names to `{ beforeSend?, postTest? }`, resolved by `x-spectest.beforeSend`/`postTest` | `{}` |
+| `coverageReport` (`--coverage-report`) | Print an OpenAPI contract coverage report after the run | `false` |
+| `coverageReportFile` (`--coverage-report-file`) | Write the coverage report to a file instead of stdout | none |
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` (`--dir`) | Root directory of the project | current working directory |
 

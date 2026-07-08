@@ -37,6 +37,8 @@ export interface TestCase {
   bombard?: number;
   /** Skip this test completely */
   skip?: boolean;
+  /** Why this test is skipped */
+  skipReason?: string;
   /** Mark as focused */
   focus?: boolean;
   /** Requests per second override */
@@ -100,6 +102,17 @@ export type OpenApiRequestMutator = (ctx: {
   path: string;
 }) => Promise<OpenApiRequestMutation | void> | OpenApiRequestMutation | void;
 
+/** A single scheme entry: either the default hook, or a named-variant map (e.g. valid/expired/missing) */
+export type OpenApiAuthEntry = OpenApiRequestMutator | Record<string, OpenApiRequestMutator>;
+
+export type OpenApiBeforeSendHook = (req: any, state: any) => Promise<any> | any;
+export type OpenApiPostTestHook = (res: any, state: any, ctx: any) => Promise<any> | any;
+
+export interface OpenApiHookEntry {
+  beforeSend?: OpenApiBeforeSendHook;
+  postTest?: OpenApiPostTestHook;
+}
+
 export interface SpectestConfig {
   configFile?: string;
   baseUrl?: string;
@@ -127,7 +140,10 @@ export interface SpectestConfig {
   recordingExcludeUrls?: RecordingUrlExclusion[];
   openapi?: string;
   openapiServer?: string | number;
-  openapiAuth?: Record<string, OpenApiRequestMutator>;
+  openapiAuth?: Record<string, OpenApiAuthEntry>;
+  openapiHooks?: Record<string, OpenApiHookEntry>;
+  coverageReport?: boolean;
+  coverageReportFile?: string;
 }
 
 export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition' | 'cancelled';

@@ -1,8 +1,17 @@
 import { readFile } from 'fs/promises';
+import { randomUUID } from 'crypto';
 import path from 'path';
 import { load as parseYaml } from 'js-yaml';
 import type { Plugin } from '../plugin-api.js';
-import type { OpenApiRequestMutation, SpectestConfig, Suite, TestCase } from '../types.js';
+import type {
+  OpenApiBeforeSendHook,
+  OpenApiPostTestHook,
+  OpenApiRequestMutation,
+  OpenApiRequestMutator,
+  SpectestConfig,
+  Suite,
+  TestCase,
+} from '../types.js';
 
 const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']);
 const DEFAULT_PARAM_STYLE: Record<string, { style: string; explode: boolean }> = {
@@ -18,6 +27,41 @@ class OpenApiSkip extends Error {
     this.name = 'OpenApiSkip';
   }
 }
+
+type NormalizedXSpectest = {
+  status?: number;
+  tags?: string[];
+  skip?: boolean;
+  skipReason?: string;
+  phase?: 'setup' | 'main' | 'teardown';
+  dependsOn?: string[];
+  beforeSend?: string;
+  postTest?: string;
+  security?: string;
+  generate?: Record<string, string>;
+};
+
+type PendingLink = {
+  kind: 'path' | 'query' | 'header' | 'cookie' | 'body';
+  name?: string;
+  source: string;
+  expression: string;
+};
+
+type LinkSource = { from: string; parameters: Record<string, string>; requestBody?: string };
+type ParamLinkCandidate = { name: string; source: string; expression: string };
+type BodyLinkCandidate = { source: string; expression: string };
+
+type OperationEntry = {
+  method: string;
+  pathKey: string;
+  operation: any;
+  rootParameters: any[];
+  operationId: string;
+  exampleKeys: string[];
+};
+
+type SecurityOverride = { mode: 'none' } | { mode: 'variant'; variant: string };
 
 function parseDocument(raw: string, filePath: string): any {
   if (filePath.endsWith('.json')) {
@@ -112,6 +156,128 @@ function exampleValue(source: any): any {
   return undefined;
 }
 
+function exampleValueForKey(source: any, key: string | undefined): any {
+  if (!source || typeof source !== 'object') return undefined;
+  if (key && source.examples && typeof source.examples === 'object' && key in source.examples) {
+    const entry = source.examples[key];
+    if (entry && typeof entry === 'object' && 'value' in entry) return entry.value;
+    return entry;
+  }
+  return exampleValue(source);
+}
+
+function addExampleKeys(keys: Set<string>, source: any): void {
+  if (source?.examples && typeof source.examples === 'object') {
+    Object.keys(source.examples).forEach((k) => keys.add(k));
+  }
+}
+
+function collectExampleKeys(bodyJsonContent: any, parameters: any[], responses: any): string[] {
+  const keys = new Set<string>();
+  addExampleKeys(keys, bodyJsonContent);
+  for (const param of parameters) {
+    addExampleKeys(keys, param);
+  }
+  for (const response of Object.values(responses || {})) {
+    addExampleKeys(keys, chooseJsonContent((response as any)?.content));
+  }
+  return [...keys];
+}
+
+function normalizeXSpectest(raw: any): NormalizedXSpectest {
+  if (!raw || typeof raw !== 'object') return {};
+  const result: NormalizedXSpectest = {};
+  if (typeof raw.status === 'number') result.status = raw.status;
+  if (Array.isArray(raw.tags)) result.tags = raw.tags.map(String);
+  if (typeof raw.skip === 'boolean') result.skip = raw.skip;
+  if (typeof raw.skipReason === 'string') result.skipReason = raw.skipReason;
+  if (raw.phase === 'setup' || raw.phase === 'main' || raw.phase === 'teardown') result.phase = raw.phase;
+  if (Array.isArray(raw.dependsOn)) result.dependsOn = raw.dependsOn.map(String);
+  if (typeof raw.beforeSend === 'string') result.beforeSend = raw.beforeSend;
+  if (typeof raw.postTest === 'string') result.postTest = raw.postTest;
+  if (typeof raw.security === 'string') result.security = raw.security;
+  if (raw.generate && typeof raw.generate === 'object') result.generate = raw.generate;
+  return result;
+}
+
+function mergeXSpectest(base: NormalizedXSpectest, override: NormalizedXSpectest): NormalizedXSpectest {
+  return { ...base, ...override };
+}
+
+function collectXSpectestForKey(
+  resolvedOperation: any,
+  bodyJsonContent: any,
+  parameters: any[],
+  key: string | undefined
+): NormalizedXSpectest {
+  let merged = normalizeXSpectest(resolvedOperation['x-spectest']);
+  if (!key) return merged;
+
+  const bodyEntry = bodyJsonContent?.examples?.[key];
+  merged = mergeXSpectest(merged, normalizeXSpectest(bodyEntry?.['x-spectest']));
+  for (const param of parameters) {
+    const paramEntry = param?.examples?.[key];
+    merged = mergeXSpectest(merged, normalizeXSpectest(paramEntry?.['x-spectest']));
+  }
+  for (const response of Object.values(resolvedOperation.responses || {})) {
+    const jsonContent = chooseJsonContent((response as any)?.content);
+    const responseEntry = jsonContent?.examples?.[key];
+    merged = mergeXSpectest(merged, normalizeXSpectest(responseEntry?.['x-spectest']));
+  }
+  return merged;
+}
+
+const GENERATORS: Record<string, () => string> = {
+  uuid: () => randomUUID(),
+  timestamp: () => String(Date.now()),
+  shortId: () => Math.random().toString(36).slice(2, 10),
+};
+
+const GENERATOR_PLACEHOLDER = /\{\{(uuid|timestamp|shortId)\}\}/g;
+
+function resolveGeneratorPlaceholders<T>(value: T): T {
+  if (typeof value === 'string') {
+    return value.replace(GENERATOR_PLACEHOLDER, (_match, generatorName: string) => GENERATORS[generatorName]()) as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => resolveGeneratorPlaceholders(item)) as unknown as T;
+  }
+  if (value && typeof value === 'object') {
+    const result: any = {};
+    for (const [k, v] of Object.entries(value as any)) {
+      result[k] = resolveGeneratorPlaceholders(v);
+    }
+    return result;
+  }
+  return value;
+}
+
+function setByPath(target: any, parts: string[], value: any): void {
+  let current = target;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const part = parts[i];
+    if (typeof current[part] !== 'object' || current[part] === null) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
+function applyGeneratorOverrides(body: any, generate: Record<string, string> | undefined): any {
+  if (!generate || Object.keys(generate).length === 0) return body;
+  if (body === undefined || body === null || typeof body !== 'object') return body;
+  const result = JSON.parse(JSON.stringify(body));
+  for (const [pathKey, generatorName] of Object.entries(generate)) {
+    const generator = GENERATORS[generatorName];
+    if (!generator) {
+      throw new OpenApiSkip(`unknown x-spectest.generate generator '${generatorName}'`);
+    }
+    setByPath(result, pathKey.split('.'), generator());
+  }
+  return result;
+}
+
 function valueToString(value: any): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
@@ -127,16 +293,24 @@ function hasDefaultSerialization(param: any): boolean {
   return style === defaults.style && explode === defaults.explode;
 }
 
-function buildParameters(pathTemplate: string, parameters: any[]): {
+function buildParameters(
+  pathTemplate: string,
+  parameters: any[],
+  key: string | undefined,
+  linkCandidates: ParamLinkCandidate[]
+): {
   endpointPath: string;
   query: URLSearchParams;
   headers: Record<string, string>;
   cookies: Record<string, string>;
+  pendingLinks: PendingLink[];
 } {
   let endpointPath = pathTemplate;
   const query = new URLSearchParams();
   const headers: Record<string, string> = {};
   const cookies: Record<string, string> = {};
+  const pendingLinks: PendingLink[] = [];
+  const linkedPathParams = new Set<string>();
 
   for (const param of parameters) {
     if (!param || typeof param !== 'object' || !param.in || !param.name) continue;
@@ -144,9 +318,15 @@ function buildParameters(pathTemplate: string, parameters: any[]): {
       throw new OpenApiSkip(`unsupported parameter serialization for ${param.in} parameter '${param.name}'`);
     }
 
-    const value = exampleValue(param);
+    const value = resolveGeneratorPlaceholders(exampleValueForKey(param, key));
     if (value === undefined) {
       if (param.required || param.in === 'path') {
+        const link = linkCandidates.find((c) => c.name === param.name);
+        if (link) {
+          pendingLinks.push({ kind: param.in, name: param.name, source: link.source, expression: link.expression });
+          if (param.in === 'path') linkedPathParams.add(param.name);
+          continue;
+        }
         throw new OpenApiSkip(`missing required ${param.in} parameter '${param.name}' example/default`);
       }
       continue;
@@ -163,12 +343,13 @@ function buildParameters(pathTemplate: string, parameters: any[]): {
     }
   }
 
-  const unresolvedPathParam = endpointPath.match(/\{[^}]+\}/);
-  if (unresolvedPathParam) {
-    throw new OpenApiSkip(`missing required path parameter ${unresolvedPathParam[0]} example/default`);
+  const unresolvedPathParams = [...endpointPath.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]);
+  const trulyUnresolved = unresolvedPathParams.find((p) => !linkedPathParams.has(p));
+  if (trulyUnresolved) {
+    throw new OpenApiSkip(`missing required path parameter {${trulyUnresolved}} example/default`);
   }
 
-  return { endpointPath, query, headers, cookies };
+  return { endpointPath, query, headers, cookies, pendingLinks };
 }
 
 function chooseJsonContent(content: any): any {
@@ -176,21 +357,31 @@ function chooseJsonContent(content: any): any {
   return content['application/json'];
 }
 
-function buildRequestBody(operation: any): any {
+function buildRequestBody(
+  operation: any,
+  key: string | undefined,
+  bodyCandidate: BodyLinkCandidate | undefined
+): { value: any; pendingLink?: PendingLink } {
   const requestBody = operation.requestBody;
-  if (!requestBody) return undefined;
+  if (!requestBody) return { value: undefined };
   const jsonContent = chooseJsonContent(requestBody.content);
   if (!jsonContent) {
     if (requestBody.required) {
       throw new OpenApiSkip('unsupported required request body media type');
     }
-    return undefined;
+    return { value: undefined };
   }
-  const value = exampleValue(jsonContent);
-  if (value === undefined && requestBody.required) {
-    throw new OpenApiSkip('missing required request body example/default');
+  const value = exampleValueForKey(jsonContent, key);
+  if (value === undefined) {
+    if (requestBody.required) {
+      if (bodyCandidate) {
+        return { value: undefined, pendingLink: { kind: 'body', source: bodyCandidate.source, expression: bodyCandidate.expression } };
+      }
+      throw new OpenApiSkip('missing required request body example/default');
+    }
+    return { value: undefined };
   }
-  return value;
+  return { value };
 }
 
 function responseStatusCode(status: string): number | undefined {
@@ -198,13 +389,34 @@ function responseStatusCode(status: string): number | undefined {
   return undefined;
 }
 
-function chooseResponse(operation: any): { status?: number; schema?: any; example?: any; weakDefaultStatus?: boolean } {
+function chooseResponse(
+  operation: any,
+  key: string | undefined,
+  forcedStatus: number | undefined
+): { status?: number; schema?: any; example?: any; weakDefaultStatus?: boolean } {
   const responses = operation.responses || {};
-  const successStatus = Object.keys(responses)
-    .filter((status) => /^2\d\d$/.test(status))
-    .map(Number)
-    .sort((a, b) => a - b)[0];
-  const responseKey = successStatus !== undefined ? String(successStatus) : responses.default ? 'default' : undefined;
+  let responseKey: string | undefined;
+
+  if (forcedStatus !== undefined) {
+    responseKey = String(forcedStatus);
+    if (!responses[responseKey]) {
+      throw new OpenApiSkip(`x-spectest.status ${forcedStatus} has no matching response definition`);
+    }
+  } else if (key) {
+    responseKey = Object.keys(responses).find((status) => {
+      if (!/^\d\d\d$/.test(status) || /^2\d\d$/.test(status)) return false;
+      const jsonContent = chooseJsonContent(responses[status]?.content);
+      return Boolean(jsonContent?.examples && typeof jsonContent.examples === 'object' && key in jsonContent.examples);
+    });
+  }
+
+  if (!responseKey) {
+    const successStatus = Object.keys(responses)
+      .filter((status) => /^2\d\d$/.test(status))
+      .map(Number)
+      .sort((a, b) => a - b)[0];
+    responseKey = successStatus !== undefined ? String(successStatus) : responses.default ? 'default' : undefined;
+  }
   if (!responseKey) {
     throw new OpenApiSkip('no usable response status');
   }
@@ -224,7 +436,7 @@ function chooseResponse(operation: any): { status?: number; schema?: any; exampl
   }
 
   const schema = jsonContent.schema;
-  const example = exampleValue(jsonContent);
+  const example = exampleValueForKey(jsonContent, key);
   if (!schema && example === undefined && status === undefined) {
     throw new OpenApiSkip('no usable response assertion');
   }
@@ -294,6 +506,17 @@ function applyMutation(
   }
 }
 
+function resolveAuthHook(hooksEntry: any, variantName: string | undefined): OpenApiRequestMutator | undefined {
+  if (typeof hooksEntry === 'function') {
+    return variantName ? undefined : hooksEntry;
+  }
+  if (hooksEntry && typeof hooksEntry === 'object') {
+    const key = variantName || 'valid';
+    return typeof hooksEntry[key] === 'function' ? hooksEntry[key] : undefined;
+  }
+  return undefined;
+}
+
 async function applySecurity(
   cfg: SpectestConfig,
   doc: any,
@@ -301,21 +524,26 @@ async function applySecurity(
   method: string,
   pathKey: string,
   headers: Record<string, string>,
-  query: URLSearchParams
+  query: URLSearchParams,
+  securityOverride?: SecurityOverride
 ): Promise<void> {
+  if (securityOverride?.mode === 'none') return;
   const security = operation.security ?? doc.security;
   if (!Array.isArray(security) || security.length === 0) return;
   const schemes = doc.components?.securitySchemes || {};
+  const variantName = securityOverride?.mode === 'variant' ? securityOverride.variant : undefined;
 
   for (const requirement of security) {
     const entries = Object.keys(requirement || {});
     if (entries.length === 0) return;
     const hooks = cfg.openapiAuth || {};
-    const hasAllHooks = entries.every((schemeName) => typeof hooks[schemeName] === 'function');
+    const resolvedHooks = entries.map((schemeName) => resolveAuthHook(hooks[schemeName], variantName));
+    const hasAllHooks = resolvedHooks.every((hook) => typeof hook === 'function');
     if (!hasAllHooks) continue;
 
-    for (const schemeName of entries) {
-      const mutation = await hooks[schemeName]({
+    for (let i = 0; i < entries.length; i += 1) {
+      const schemeName = entries[i];
+      const mutation = await resolvedHooks[i]!({
         schemeName,
         scheme: schemes[schemeName],
         operation,
@@ -327,7 +555,7 @@ async function applySecurity(
     return;
   }
 
-  throw new OpenApiSkip('missing auth hook');
+  throw new OpenApiSkip(variantName ? `missing auth hook variant '${variantName}' for required scheme` : 'missing auth hook');
 }
 
 function appendQuery(endpoint: string, query: URLSearchParams): string {
@@ -348,36 +576,221 @@ function skippedTest(name: string, operationId: string, endpoint: string, tags: 
   };
 }
 
-async function operationToTest(
+function resolveHooks(
+  cfg: SpectestConfig,
+  xSpectest: NormalizedXSpectest
+): { beforeSend?: OpenApiBeforeSendHook; postTest?: OpenApiPostTestHook; skip?: boolean; reason?: string } {
+  const result: { beforeSend?: OpenApiBeforeSendHook; postTest?: OpenApiPostTestHook } = {};
+  if (xSpectest.beforeSend) {
+    const entry = cfg.openapiHooks?.[xSpectest.beforeSend];
+    if (!entry?.beforeSend) {
+      return { skip: true, reason: `missing openapiHooks entry '${xSpectest.beforeSend}' for beforeSend` };
+    }
+    result.beforeSend = entry.beforeSend;
+  }
+  if (xSpectest.postTest) {
+    const entry = cfg.openapiHooks?.[xSpectest.postTest];
+    if (!entry?.postTest) {
+      return { skip: true, reason: `missing openapiHooks entry '${xSpectest.postTest}' for postTest` };
+    }
+    result.postTest = entry.postTest;
+  }
+  return result;
+}
+
+function parseRuntimeExpression(
+  expression: string
+): { kind: 'body'; pointer: string } | { kind: 'header'; name: string } | undefined {
+  const bodyMatch = /^\$response\.body#(\/.*)$/.exec(expression);
+  if (bodyMatch) return { kind: 'body', pointer: bodyMatch[1] };
+  const headerMatch = /^\$response\.header\.(.+)$/.exec(expression);
+  if (headerMatch) return { kind: 'header', name: headerMatch[1] };
+  return undefined;
+}
+
+function getByJsonPointer(data: any, pointer: string): any {
+  if (!pointer || pointer === '/') return data;
+  const parts = pointer.replace(/^\//, '').split('/').map(decodePointerPart);
+  let current = data;
+  for (const part of parts) {
+    if (current === null || current === undefined) return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function getHeaderValue(headers: any, name: string): any {
+  if (!headers) return undefined;
+  if (typeof headers.get === 'function') {
+    return headers.get(name) ?? headers.get(name.toLowerCase());
+  }
+  const entry = Object.entries(headers).find(([k]) => k.toLowerCase() === name.toLowerCase());
+  return entry ? entry[1] : undefined;
+}
+
+function resolveRuntimeExpression(expression: string, completedResult: any): any {
+  const parsed = parseRuntimeExpression(expression);
+  if (!parsed) {
+    throw new Error(`unsupported link runtime expression '${expression}'`);
+  }
+  if (parsed.kind === 'body') {
+    return getByJsonPointer(completedResult?.response?.data, parsed.pointer);
+  }
+  return getHeaderValue(completedResult?.response?.headers, parsed.name);
+}
+
+function applyPendingLinks(config: any, state: any, pendingLinks: PendingLink[]): any {
+  const updated = { ...config, headers: { ...config.headers } };
+  let url = String(updated.url);
+  for (const link of pendingLinks) {
+    const completed = state?.completedCases?.[link.source];
+    if (!completed) {
+      throw new Error(`link source '${link.source}' has no completed result in state`);
+    }
+    const value = resolveRuntimeExpression(link.expression, completed);
+    if (link.kind === 'path') {
+      url = url.replace(new RegExp(`\\{${link.name}\\}`, 'g'), encodeURIComponent(valueToString(value)));
+    } else if (link.kind === 'query') {
+      const [base, qs] = url.split('?');
+      const params = new URLSearchParams(qs || '');
+      params.set(link.name!, valueToString(value));
+      const queryString = params.toString();
+      url = queryString ? `${base}?${queryString}` : base;
+    } else if (link.kind === 'header') {
+      updated.headers[link.name!] = valueToString(value);
+    } else if (link.kind === 'cookie') {
+      mergeCookieHeader(updated.headers, { [link.name!]: valueToString(value) });
+    } else if (link.kind === 'body') {
+      updated.data = value;
+    }
+  }
+  updated.url = url;
+  return updated;
+}
+
+function composeBeforeSend(pendingLinks: PendingLink[], userBeforeSend: OpenApiBeforeSendHook | undefined): OpenApiBeforeSendHook {
+  return async (config: any, state: any) => {
+    let updated = config;
+    if (pendingLinks.length) {
+      updated = applyPendingLinks(config, state, pendingLinks);
+    }
+    if (userBeforeSend) {
+      const result = await userBeforeSend(updated, state);
+      if (result) updated = result;
+    }
+    return updated;
+  };
+}
+
+function resolveLinkCandidatesForParams(
+  sources: LinkSource[] | undefined,
+  operationIdToGeneratedIds: Map<string, string[]>
+): { paramCandidates: ParamLinkCandidate[]; bodyCandidate?: BodyLinkCandidate } {
+  const paramCandidates: ParamLinkCandidate[] = [];
+  let bodyCandidate: BodyLinkCandidate | undefined;
+  for (const source of sources || []) {
+    const generatedIds = operationIdToGeneratedIds.get(source.from);
+    if (!generatedIds || generatedIds.length !== 1) continue;
+    const sourceId = generatedIds[0];
+    for (const [paramName, expression] of Object.entries(source.parameters || {})) {
+      if (!paramCandidates.some((c) => c.name === paramName)) {
+        paramCandidates.push({ name: paramName, source: sourceId, expression });
+      }
+    }
+    if (!bodyCandidate && source.requestBody) {
+      bodyCandidate = { source: sourceId, expression: source.requestBody };
+    }
+  }
+  return { paramCandidates, bodyCandidate };
+}
+
+function collectLinks(doc: any, operationEntries: OperationEntry[]): Map<string, LinkSource[]> {
+  const index = new Map<string, LinkSource[]>();
+  for (const entry of operationEntries) {
+    let resolvedOperation: any;
+    try {
+      resolvedOperation = resolveRefs(entry.operation, doc);
+    } catch {
+      continue;
+    }
+    const responses = resolvedOperation.responses || {};
+    for (const response of Object.values(responses)) {
+      const links = (response as any)?.links;
+      if (!links || typeof links !== 'object') continue;
+      for (const link of Object.values(links)) {
+        const targetOperationId = (link as any)?.operationId;
+        if (typeof targetOperationId !== 'string') continue;
+        const list = index.get(targetOperationId) || [];
+        list.push({
+          from: entry.operationId,
+          parameters:
+            (link as any).parameters && typeof (link as any).parameters === 'object' ? (link as any).parameters : {},
+          requestBody: typeof (link as any).requestBody === 'string' ? (link as any).requestBody : undefined,
+        });
+        index.set(targetOperationId, list);
+      }
+    }
+  }
+  return index;
+}
+
+async function buildTestForExample(
   doc: any,
   cfg: SpectestConfig,
-  method: string,
-  pathKey: string,
-  operation: any,
-  rootParameters: any[] = []
+  entry: OperationEntry,
+  key: string | undefined,
+  linkIndex: Map<string, LinkSource[]>,
+  operationIdToGeneratedIds: Map<string, string[]>
 ): Promise<TestCase> {
-  const name = operation.summary || operation.operationId || `${method.toUpperCase()} ${pathKey}`;
-  const operationId = operation.operationId || stableSlug(`${method}-${pathKey}`);
-  const tags = [...new Set([...(operation.tags || []), 'openapi'].map(String))];
+  const { method, pathKey, operation, rootParameters, operationId: rawOperationId } = entry;
+  const fallbackName = operation.summary || operation.operationId || `${method.toUpperCase()} ${pathKey}`;
+  const testOperationId = key ? `${rawOperationId}+${key}` : rawOperationId;
+  const name = key ? `${fallbackName} — ${key}` : fallbackName;
+  const baseTags = [...new Set([...(operation.tags || []), 'openapi'].map(String))];
 
   try {
     const resolvedOperation = resolveRefs(operation, doc);
     const parameters = [
-      ...rootParameters.map((param) => resolveRefs(param, doc)),
+      ...rootParameters.map((param: any) => resolveRefs(param, doc)),
       ...(resolvedOperation.parameters || []).map((param: any) => resolveRefs(param, doc)),
     ];
+    const bodyJsonContent = chooseJsonContent(resolvedOperation.requestBody?.content);
+    const xSpectest = collectXSpectestForKey(resolvedOperation, bodyJsonContent, parameters, key);
+    const tags = [...new Set([...baseTags, ...(xSpectest.tags || [])])];
+
+    if (xSpectest.skip) {
+      const test = skippedTest(name, testOperationId, pathKey, tags, xSpectest.skipReason || 'skipped via x-spectest');
+      if (xSpectest.phase) test.phase = xSpectest.phase;
+      return test;
+    }
+
+    const { paramCandidates, bodyCandidate } = resolveLinkCandidatesForParams(
+      linkIndex.get(rawOperationId),
+      operationIdToGeneratedIds
+    );
     const serverPrefix = effectiveServerPrefix(doc, resolvedOperation, cfg);
-    const { endpointPath, query, headers, cookies } = buildParameters(pathKey, parameters);
+    const { endpointPath, query, headers, cookies, pendingLinks } = buildParameters(pathKey, parameters, key, paramCandidates);
     mergeCookieHeader(headers, cookies);
 
-    const body = buildRequestBody(resolvedOperation);
-    const response = chooseResponse(resolvedOperation);
+    const { value: rawBody, pendingLink: bodyPendingLink } = buildRequestBody(resolvedOperation, key, bodyCandidate);
+    if (bodyPendingLink) pendingLinks.push(bodyPendingLink);
+    const body =
+      rawBody !== undefined ? applyGeneratorOverrides(resolveGeneratorPlaceholders(rawBody), xSpectest.generate) : rawBody;
+
+    const response = chooseResponse(resolvedOperation, key, xSpectest.status);
     const endpointWithoutQuery = `${serverPrefix}${endpointPath}`;
-    await applySecurity(cfg, doc, resolvedOperation, method, pathKey, headers, query);
+
+    const securityOverride: SecurityOverride | undefined =
+      xSpectest.security === 'none'
+        ? { mode: 'none' }
+        : xSpectest.security
+          ? { mode: 'variant', variant: xSpectest.security }
+          : undefined;
+    await applySecurity(cfg, doc, resolvedOperation, method, pathKey, headers, query, securityOverride);
 
     const test: TestCase = {
       name,
-      operationId,
+      operationId: testOperationId,
       endpoint: appendQuery(endpointWithoutQuery, query),
       tags,
       request: {
@@ -404,10 +817,33 @@ async function operationToTest(
     if (response.weakDefaultStatus) {
       (test as any).openapiWeakDefaultStatus = true;
     }
+    if (xSpectest.phase) {
+      test.phase = xSpectest.phase;
+    }
+
+    const dependsOn = new Set<string>(xSpectest.dependsOn || []);
+    pendingLinks.forEach((link) => dependsOn.add(link.source));
+    if (dependsOn.size) {
+      test.dependsOn = [...dependsOn];
+    }
+
+    const hooks = resolveHooks(cfg, xSpectest);
+    if (hooks.skip) {
+      return skippedTest(name, testOperationId, pathKey, tags, hooks.reason!);
+    }
+    if (pendingLinks.length) {
+      test.beforeSend = composeBeforeSend(pendingLinks, hooks.beforeSend);
+    } else if (hooks.beforeSend) {
+      test.beforeSend = hooks.beforeSend;
+    }
+    if (hooks.postTest) {
+      test.postTest = hooks.postTest;
+    }
+
     return test;
   } catch (error) {
     if (error instanceof OpenApiSkip) {
-      return skippedTest(name, operationId, pathKey, tags, error.message);
+      return skippedTest(name, testOperationId, pathKey, baseTags, error.message);
     }
     throw error;
   }
@@ -427,19 +863,61 @@ function assertUniqueOperationIds(suites: Suite[]): void {
   }
 }
 
-async function loadOpenApiSuite(filePath: string, cfg: SpectestConfig): Promise<Suite> {
+async function parseOpenApiDoc(filePath: string): Promise<any> {
   const raw = await readFile(filePath, 'utf8');
   const doc = parseDocument(raw, filePath);
   assertOpenApiDocument(doc);
+  return doc;
+}
 
-  const name = doc.info?.title || path.relative(process.cwd(), filePath);
-  const tests: TestCase[] = [];
+function buildOperationEntries(doc: any): OperationEntry[] {
+  const operationEntries: OperationEntry[] = [];
   for (const [pathKey, pathItem] of Object.entries(doc.paths || {})) {
     if (!pathItem || typeof pathItem !== 'object') continue;
     const rootParameters = Array.isArray((pathItem as any).parameters) ? (pathItem as any).parameters : [];
     for (const [method, operation] of Object.entries(pathItem)) {
       if (!HTTP_METHODS.has(method) || !operation || typeof operation !== 'object') continue;
-      tests.push(await operationToTest(doc, cfg, method, pathKey, operation, rootParameters));
+      const operationId = (operation as any).operationId || stableSlug(`${method}-${pathKey}`);
+      let exampleKeys: string[] = [];
+      try {
+        const resolvedOperation = resolveRefs(operation, doc);
+        const parameters = [
+          ...rootParameters.map((param: any) => resolveRefs(param, doc)),
+          ...(resolvedOperation.parameters || []).map((param: any) => resolveRefs(param, doc)),
+        ];
+        const bodyJsonContent = chooseJsonContent(resolvedOperation.requestBody?.content);
+        exampleKeys = collectExampleKeys(bodyJsonContent, parameters, resolvedOperation.responses);
+      } catch {
+        exampleKeys = [];
+      }
+      operationEntries.push({ method, pathKey, operation, rootParameters, operationId, exampleKeys });
+    }
+  }
+  return operationEntries;
+}
+
+function generatedIdsForEntry(entry: OperationEntry): string[] {
+  return entry.exampleKeys.length ? entry.exampleKeys.map((k) => `${entry.operationId}+${k}`) : [entry.operationId];
+}
+
+export async function loadOpenApiSuite(filePath: string, cfg: SpectestConfig): Promise<Suite> {
+  const doc = await parseOpenApiDoc(filePath);
+  const name = doc.info?.title || path.relative(process.cwd(), filePath);
+
+  const operationEntries = buildOperationEntries(doc);
+
+  const operationIdToGeneratedIds = new Map<string, string[]>();
+  for (const entry of operationEntries) {
+    operationIdToGeneratedIds.set(entry.operationId, generatedIdsForEntry(entry));
+  }
+
+  const linkIndex = collectLinks(doc, operationEntries);
+
+  const tests: TestCase[] = [];
+  for (const entry of operationEntries) {
+    const keys: (string | undefined)[] = entry.exampleKeys.length ? entry.exampleKeys : [undefined];
+    for (const key of keys) {
+      tests.push(await buildTestForExample(doc, cfg, entry, key, linkIndex, operationIdToGeneratedIds));
     }
   }
 
@@ -449,6 +927,23 @@ async function loadOpenApiSuite(filePath: string, cfg: SpectestConfig): Promise<
   }
   assertUniqueOperationIds([suite]);
   return suite;
+}
+
+export interface OpenApiOperationDescriptor {
+  method: string;
+  pathKey: string;
+  operationId: string;
+  generatedIds: string[];
+}
+
+export async function describeOpenApiOperations(filePath: string): Promise<OpenApiOperationDescriptor[]> {
+  const doc = await parseOpenApiDoc(filePath);
+  return buildOperationEntries(doc).map((entry) => ({
+    method: entry.method,
+    pathKey: entry.pathKey,
+    operationId: entry.operationId,
+    generatedIds: generatedIdsForEntry(entry),
+  }));
 }
 
 export const openApiLoaderPlugin = (cfg: SpectestConfig): Plugin => ({

@@ -1,12 +1,13 @@
 {
   "name": "spectest",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Declarative API testing CLI for fast HTTP endpoint and REST API tests",
   "main": "dist/cli.js",
   "scripts": {
     "build": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
     "build:prod": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
-    "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com"
+    "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com",
+    "test:unit": "node --import ./test/support/resolve-ts.mjs --test test/*.test.ts"
   },
   "keywords": [
     "api-testing",

@@ -1,0 +1,39 @@
+openapi: 3.0.3
+info:
+  title: Links Fixture
+  version: 1.0.0
+paths:
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { product: "domain" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { orderId: "order-123" }
+          links:
+            GetOrderByOrderId:
+              operationId: getOrder
+              parameters:
+                orderId: "$response.body#/orderId"
+  /orders/{orderId}:
+    get:
+      operationId: getOrder
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { orderId: "order-123", status: "paid" }

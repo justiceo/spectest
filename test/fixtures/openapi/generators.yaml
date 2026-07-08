@@ -1,0 +1,43 @@
+openapi: 3.0.3
+info:
+  title: Generators Fixture
+  version: 1.0.0
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              id: "{{uuid}}"
+              createdAt: "{{timestamp}}"
+              slug: "{{shortId}}"
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { ok: true }
+  /orders2:
+    post:
+      operationId: createOrder2
+      x-spectest:
+        generate:
+          orderId: uuid
+          "product.domainName": shortId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example:
+              orderId: "placeholder"
+              product:
+                domainName: "placeholder.com"
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { ok: true }

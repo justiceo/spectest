@@ -38,6 +38,8 @@ export interface CliConfig {
   openapi?: string;
   openapiServer?: string | number;
   openapiAuth?: Record<string, OpenApiRequestMutator>;
+  coverageReport?: boolean;
+  coverageReportFile?: string;
 }
 
 function parseTestOutput(value: string | undefined): TestOutputMode {
@@ -124,6 +126,8 @@ const HELP_OPTIONS: [string, string][] = [
   ['--missing-recording-behavior <mode>', "Behavior when replay can't find a cassette entry: fail, record, bypass (default: fail)"],
   ['--openapi <path>', 'Path to an OpenAPI 3.0/3.1 document to load directly'],
   ['--openapi-server <url|index>', 'Server URL or index to select from an OpenAPI document'],
+  ['--coverage-report', 'Print a per-operation OpenAPI contract coverage report after the run'],
+  ['--coverage-report-file <path>', 'Write the coverage report to a file instead of stdout'],
   ['--dir <path>', 'Root directory of the project (default: current working directory)'],
   ['-h, --help', 'Show this help message and exit'],
 ];
@@ -142,6 +146,10 @@ Examples:
   spectest --base-url=https://api.example.com
   spectest --openapi ./openapi.yaml --base-url=https://api.example.com
   spectest --tags=smoke,auth ./test/auth.spectest.js
+  spectest --openapi ./openapi.yaml --coverage-report
+
+Commands:
+  generate openapi-tests --openapi <path> --output <dir>  Scaffold editable .spectest.js files from an OpenAPI document
 `);
 }
 
@@ -237,6 +245,12 @@ function parseArgs(argv: string[]): CliConfig {
         case 'openapi-server':
           raw.openapiServer = value;
           break;
+        case 'coverage-report':
+          raw.coverageReport = true;
+          break;
+        case 'coverage-report-file':
+          raw.coverageReportFile = value;
+          break;
         case 'dir':
           raw.projectRoot = value;
           break;
@@ -258,8 +272,7 @@ function parseArgs(argv: string[]): CliConfig {
   return cleaned;
 }
 
-export async function loadConfig(argv = process.argv): Promise<CliConfig> {
-  const cliOpts = parseArgs(argv);
+export async function loadConfigFromCliOpts(cliOpts: CliConfig): Promise<CliConfig> {
   const projectRoot = cliOpts.projectRoot
     ? path.resolve(cliOpts.projectRoot)
     : process.cwd();
@@ -301,6 +314,13 @@ export async function loadConfig(argv = process.argv): Promise<CliConfig> {
   if (cfg.openapi) {
     cfg.openapi = path.resolve(projectRoot, cfg.openapi);
   }
+  if (cfg.coverageReportFile) {
+    cfg.coverageReportFile = path.resolve(projectRoot, cfg.coverageReportFile);
+  }
 
   return cfg;
+}
+
+export async function loadConfig(argv = process.argv): Promise<CliConfig> {
+  return loadConfigFromCliOpts(parseArgs(argv));
 }

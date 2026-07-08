@@ -1,0 +1,22 @@
+openapi: 3.0.3
+info:
+  title: Regression V1 Fixture
+  version: 1.0.0
+paths:
+  /todos/{id}:
+    get:
+      operationId: getTodo
+      summary: Fetch a todo
+      parameters:
+        - name: id
+          in: path
+          required: true
+          example: "1"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { id: "1", title: "Sample", completed: false }

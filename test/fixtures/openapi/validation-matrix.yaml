@@ -1,0 +1,37 @@
+openapi: 3.0.3
+info:
+  title: Validation Matrix Fixture
+  version: 1.0.0
+paths:
+  /register:
+    post:
+      operationId: register
+      summary: Register a domain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            examples:
+              success:
+                value: { domainName: "example.com", email: "a@b.com" }
+              missingDomainName:
+                value: { email: "a@b.com" }
+              missingEmail:
+                value: { domainName: "example.com" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              examples:
+                success:
+                  value: { orderId: "order-1", status: "created" }
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              examples:
+                missingDomainName:
+                  value: { error: "domainName is required" }
+                missingEmail:
+                  value: { error: "email is required" }

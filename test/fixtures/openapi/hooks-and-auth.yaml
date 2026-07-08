@@ -1,0 +1,63 @@
+openapi: 3.0.3
+info:
+  title: Hooks and Auth Fixture
+  version: 1.0.0
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: session
+paths:
+  /charge:
+    post:
+      operationId: charge
+      x-spectest:
+        beforeSend: attachPaymentToken
+        postTest: recordCharge
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { amount: 100 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { status: "charged" }
+  /profile:
+    get:
+      operationId: getProfile
+      security:
+        - session: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              examples:
+                success:
+                  value: { id: "u1" }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              examples:
+                expiredSession:
+                  value: { error: "expired" }
+                  x-spectest:
+                    security: expired
+  /public:
+    get:
+      operationId: publicPing
+      security:
+        - session: []
+      x-spectest:
+        security: none
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }

@@ -1,12 +1,14 @@
 # OpenAPI Loader: Automated Negative & Fuzzy Testing
 
+> **Status (2026-07-08): Phases 1–2 greenlit** (negative testing seeded from existing examples, body + parameters), including two additions surfaced by code review: the resolve-once refactor and the synthetic-key exclusion from link resolution (both folded into Phase 1 below). Phase 3 (the synthesizer) remains the go/no-go decision point; Phases 4–5 are not approved yet.
+
 ## Summary
 
 `openapi-loader-v2-first-class-support.md` (implemented, see `src/plugins/openapi-loader.ts`) closed the gap for negative testing that is *hand-authored in the spec*: an operation with a `register` request body documenting 20 `examples` (one per invalid field, each paired with a `400` response example) now generates 20 distinct tests with zero extra Spectest code. That is still fundamentally an **example-based** mechanism — a human has to think of each invalid case and write it into the OpenAPI document.
 
 This doc analyzes what it would take to go one level further: **derive** negative and fuzzy test cases directly from JSON Schema constraints (`required`, `type`, `minLength`, `enum`, `format`, ...) with no per-case authoring, and optionally exercise the API with randomized/boundary data beyond the single hand-picked example. This is explicitly the thing v1 and v2 both declared out of scope ("no synthetic data without an explicit example" / "full schema-driven synthetic payload generation ... conflicts with v1's no synthetic data principle"). This doc treats that as a deliberate, opt-in exception that needs its own default-off gate and its own safety rails — not a reversal of the existing default.
 
-No code changes are proposed or made by this doc. It is an analysis + effort estimate to decide whether/how to proceed.
+This doc started as an analysis + effort estimate; after review against the current loader implementation (see the Architecture section's resolve-once and link-resolution findings), Phases 1–2 have been approved for implementation — see Decision at the end.
 
 ## Current State (as implemented today)
 
@@ -30,7 +32,25 @@ This doc's recommendation only covers #1 and #2 as first-class Spectest features
 
 ## Proposed Architecture
 
-The key insight that keeps this from being a rewrite: v2 already generates one `TestCase` per entry of a request/parameter `examples` map, resolves the response per-key, and merges `x-spectest` per-key. If schema-derived negative/fuzz cases are synthesized as **synthetic entries in that same `examples` map, before `buildOperationEntries` runs**, then naming (`operationId+key`), `x-spectest` merge, hook/security resolution, and coverage reporting all fall out for free — no changes needed to `buildTestForExample`, `chooseResponse`, or `collectXSpectestForKey`.
+The key insight that keeps this from being a rewrite: v2 already generates one `TestCase` per entry of a request/parameter `examples` map, resolves the response per-key, and merges `x-spectest` per-key. If schema-derived negative/fuzz cases are synthesized as **synthetic entries in that same `examples` map**, then naming (`operationId+key`), `x-spectest` merge, hook/security resolution, and coverage reporting all fall out for free — `chooseResponse` and `collectXSpectestForKey` need no changes.
+
+### Prerequisite refactor: resolve refs once per operation
+
+The naive version of this ("inject into the examples map before `buildOperationEntries` runs, downstream untouched") does not survive `resolveRefs`'s copy semantics: `resolveRefs` (`openapi-loader.ts:107`) deep-copies, and it runs *independently* in both `buildOperationEntries` (`:883`) and `buildTestForExample` (`:752`). There is no shared `examples` object to inject into — mutate the resolved copy in one place and the other never sees it; mutate the raw doc instead and synthetic keys leak into every operation that shares a `$ref`'d `components.requestBodies`/`parameters` entry.
+
+So Phase 1 starts with a small refactor: resolve refs **once per operation** in `buildOperationEntries`, store the resolved operation/parameters/body content on `OperationEntry`, and have `buildTestForExample` consume the entry's resolved objects instead of re-resolving. The injection step then targets the per-entry resolved copies, which are private to that operation by construction. This also deletes duplicated resolution work. Consequence: `buildTestForExample` *is* touched (its resolution preamble moves out), so the regression bar is "byte-identical loader output with the features disabled," not "file untouched."
+
+### Injection step
+
+A new step between `buildOperationEntries` and the per-key generation loop in `loadOpenApiSuite` (`:903`) that, when negative/fuzz testing is enabled for an operation, injects synthetic keys (e.g. `__negative-email-missing`, `__negative-age-below-minimum`, `__fuzz-name-boundary-max`) into the entry's resolved `bodyJsonContent.examples`/parameter `examples` maps that `collectExampleKeys` already reads. (Separator is `-`, not `:` — keys become part of the generated `operationId`, so the charset must stay friendly to `--filter`/`--tags`/reporting; verify before locking the prefix format.)
+
+Mutation seeding is pinned: when an operation has multiple hand-written example keys, the mutator seeds from the **first** key (spec order), overridable via `x-spectest.negative.seedExample`. One mutation set per operation, not per existing example — per-example multiplication adds count without coverage. Fields whose seed value contains a `{{uuid}}`/`{{timestamp}}`/`{{shortId}}` placeholder are skipped by the mutator (length/pattern-mutating an unresolved placeholder string is meaningless).
+
+**Self-check with Ajv (load-bearing, not optional):** Ajv is already a dependency (response validation in `cli.ts`). At generation time, every mutated payload is asserted to actually *fail* the request schema and every synthesized payload (Phase 3) to *pass* it; anything that doesn't is discarded as a skip-with-reason. This kills the "mutator thought this violates, but the effective schema after `allOf` merge is looser" false-positive class, and in Phase 3 it enables generate-and-validate instead of trying to invert regex patterns.
+
+### Link resolution must exclude synthetic keys
+
+`resolveLinkCandidatesForParams` (`:693`) only wires a `links`-derived dependency when the source operation resolves to exactly one generated test (`generatedIds.length !== 1` → silently no link). An operation that today generates one test and serves as a link source would become multi-test the moment synthetic keys are injected, and every dependent would quietly lose its auto-derived `dependsOn`/`beforeSend` — typically degrading to `missing required request body example` skips. Therefore: synthetic keys are **excluded** from `generatedIdsForEntry`/`operationIdToGeneratedIds`, so link targets always resolve to the non-synthetic test. This is the reverse direction of the "Stateful chains" risk below (which is about not mutating chain participants) and it fails silently if missed — it gets its own regression test.
 
 Two new pure modules, no changes to existing exported behavior when disabled:
 
@@ -39,9 +59,11 @@ Two new pure modules, no changes to existing exported behavior when disabled:
 
 Both modules produce plain data (no network, no OpenAPI-loader coupling), so they're unit-testable in isolation the same way `test/openapi-loader.test.ts` already tests the pure `resolveGeneratorPlaceholders`-style helpers.
 
-Wiring point: a new step between `buildOperationEntries` and the existing per-key generation loop in `loadOpenApiSuite` (`:903`) that, when negative/fuzz testing is enabled for an operation, injects synthetic keys (e.g. `__negative:email:missing`, `__negative:age:below-minimum`, `__fuzz:name:boundary-max`) into the same `bodyJsonContent.examples`/parameter `examples` maps that `collectExampleKeys` already reads. Everything downstream is unchanged.
+### Expected-status resolution — entirely in-band
 
-Expected-status resolution for a synthetic negative case, in order: `x-spectest.status` (if the author pins one) → lowest documented `4xx` response → skip with reason `"no documented error status to assert"`. This mirrors, but slightly reorders, v2's existing 3-step resolution (which prefers a same-keyed non-2xx example — synthetic keys won't have a hand-written response example to match, so that middle step is naturally skipped).
+Resolution order for a synthetic negative case: `x-spectest.negative.status` (if the author pins one) → lowest documented `4xx` response → skip with reason. The mechanism needs **zero downstream changes**: the injector computes the target status and stamps it on the synthetic example entry as `x-spectest: { status: <4xx>, tags: ['negative'] }`. `collectXSpectestForKey` (`:216`) already merges per-key entry `x-spectest`, and `chooseResponse` (`:400`) already throws `OpenApiSkip` when a forced status has no matching response definition — which yields the "skip when no documented error status exists" behavior for free.
+
+Side effect worth knowing: the negative test's response body gets validated against the documented `4xx` response *schema* (when one exists). That's a feature — it verifies the error contract, not just the status — but it makes documented-error-schema quality load-bearing; specs with sloppy error schemas will need the per-operation escape hatch.
 
 ## Configuration Surface (proposed, default OFF)
 
@@ -52,6 +74,7 @@ x-spectest:
     enabled: true
     fields: [email, age]      # optional allowlist; default is all top-level required+constrained properties
     status: 400               # optional pin, else lowest documented 4xx
+    seedExample: default      # optional; which existing example key seeds the mutator (default: first key in spec order)
   fuzz:
     enabled: true
     strategy: boundary        # boundary | random
@@ -77,15 +100,15 @@ Sized as engineer-days assuming familiarity with this codebase (i.e., the estima
 
 | Phase | Scope | Size | Est. |
 | --- | --- | --- | --- |
-| 1 | Schema mutator for request **body** only, seeded from an *existing* example (no synth needed yet). Wire into example-key pipeline. `x-spectest.negative` + global config gate, default off. `negative` tag. | S | 1–2d |
-| 2 | Extend mutator to path/query/header/cookie parameters. Expected-status resolution chain + skip-with-reason when no documented error status exists. Coverage-report awareness (surface negative-generated rows distinctly). | M | 2–3d |
+| 1 | **Resolve-once refactor** (refs resolved once per operation in `buildOperationEntries`, resolved objects carried on `OperationEntry`). **Synthetic-key exclusion from link resolution** (`generatedIdsForEntry`/`operationIdToGeneratedIds`), with regression test. Schema mutator for request **body** only, seeded from an *existing* example (first key / `seedExample`; no synth needed yet), Ajv self-check on every mutated payload. Wire into example-key pipeline. `x-spectest.negative` + global config gate, default off. `negative` tag. | M | 2–3d |
+| 2 | Extend mutator to **query parameters and cookies**. Path/header parameter mutations are deferred or loosened (see Risks: transport-level rejection and route-matching ambiguity make their expected status unreliable). Expected-status stamping via in-band `x-spectest` + skip-with-reason when no documented error status exists. Coverage-report awareness (surface negative-generated rows distinctly). | M | 2–3d |
 | 3 | Valid-data synthesizer (`openapi-schema-synth.ts`) so operations with **no** hand-written example still get negative coverage, and to serve as the base generator for fuzzing. Handles primitive types/formats/bounds; explicitly skips (with reason) schemas it can't honestly synthesize (complex `oneOf`/`anyOf`/`allOf`, circular refs, unbounded/ambiguous patterns). | M/L | 3–4d |
 | 4 | Boundary + randomized property fuzzing using the Phase 3 synthesizer. Seeded PRNG (no new dependency — a small mulberry32-style generator is ~10 lines), `--fuzz-tests` flag, reproducible seed logging. | M | 2–3d |
 | 5 (optional, not recommended to start) | Adversarial/robustness fuzzing (injection-shaped payloads, oversized strings, encoding edge cases), explicit separate opt-in + safety gating. | L | 3–5d, open-ended |
 
-**Recommended scope: Phases 1–4, ~9–12 engineer-days.** Phase 5 is called out but not recommended — see Risks.
+**Approved scope: Phases 1–2, ~4–6 engineer-days.** Phases 3–4 (~5–7d more) await the Phase 3 go/no-go; Phase 5 is called out but not recommended — see Risks.
 
-Sequencing rationale: Phase 1 alone (mutate-from-existing-example, body only) delivers the highest value-to-effort ratio and needs no new "synthesize a valid value from nothing" logic, which is the riskiest/most speculative part of this whole proposal. Phases 2–4 build outward from there. Building the synthesizer (Phase 3) before attempting it standalone is deliberately deferred until the mutator (the simpler, higher-confidence piece) is proven.
+Sequencing rationale: Phase 1 alone (mutate-from-existing-example, body only) delivers the highest value-to-effort ratio and needs no new "synthesize a valid value from nothing" logic, which is the riskiest/most speculative part of this whole proposal. Phases 2–4 build outward from there. Building the synthesizer (Phase 3) before attempting it standalone is deliberately deferred until the mutator (the simpler, higher-confidence piece) is proven. The resolve-once refactor and link-resolution exclusion live in Phase 1 deliberately: both are small, but discovering them mid-implementation would be disruptive, and the link one fails silently.
 
 ## Risks / Open Questions
 
@@ -94,13 +117,18 @@ Sequencing rationale: Phase 1 alone (mutate-from-existing-example, body only) de
 - **False positives from permissive servers.** A server that ignores unknown properties, coerces types, or documents `400` loosely will make schema-derived negative tests flaky or simply wrong (asserting an error the server was never contracted to return). Needs a per-field/per-operation override (`x-spectest.negative.enabled: false` or a `fields` denylist) as a first-class, expected-to-be-used escape hatch, not an edge case.
 - **Ambiguous schema composition.** `oneOf`/`anyOf`/`allOf` make "what's a single-field violation" and "what's a valid seed" genuinely ambiguous; Phase 3's honest answer for these is "skip with a reason," same as the loader already does for unsupported constructs elsewhere — resist the urge to guess.
 - **Real side effects.** This is the sharpest risk given the actual `ngdomain-server` use case in this initiative: some operations trigger real Paystack/Stripe charges or other non-idempotent side effects. Auto-generating negative/fuzz variants for those operations by default would be actively dangerous. Recommendation: negative/fuzz generation should refuse to run (skip, loudly) on any operation tagged in a way that indicates real side effects (reuse the existing `real-backend` tag convention from `x-spectest.tags` in the v2 doc's own example) unless explicitly opted in per-operation, never via the global flag alone.
-- **Stateful chains.** Mutating a request that's a `dependsOn` link source or target risks breaking a chain that other tests rely on for state (`state.completedCases`). Default to only generating for operations with no `dependsOn` and no incoming `links`, unless explicitly overridden.
+- **Stateful chains.** Mutating a request that's a `dependsOn` link source or target risks breaking a chain that other tests rely on for state (`state.completedCases`). Default to only generating for operations with no `dependsOn` and no incoming `links`, unless explicitly overridden. The *reverse* direction — injected synthetic keys making a link-source operation multi-test and silently disabling link auto-derivation for its dependents — is handled structurally by excluding synthetic keys from link resolution (see Architecture), not by this heuristic.
+- **Path/header parameter mutations are transport-ambiguous.** Invalid header characters are rejected by the HTTP client (undici) before the request ever reaches the server, surfacing as test *errors* rather than asserted `4xx`s; a violated path parameter usually changes which route matches, making 404-vs-400 genuinely ambiguous. Phase 2 therefore covers query + cookie parameters; path/header mutations are deferred until there's a design for constraining them to transport-legal values (or asserting "any documented 4xx").
 - **Build vs. adopt.** Existing OpenAPI-aware fuzzers (Schemathesis, Dredd + custom hooks) already do parts of Phases 3–5. This doc recommends building the small, purpose-fit version in-repo (consistent with how `{{uuid}}`/`{{shortId}}` were hand-rolled instead of pulling in `faker`) for Phases 1–4, but Phase 5 in particular may be better served by pointing users at a dedicated tool than reinventing it — revisit after Phase 4 ships if there's still real demand.
 
 ## Test Plan (for whichever phases are greenlit)
 
 - Unit: mutator produces exactly one violation per constraint kind for a schema exercising `required`, `type`, `minLength`/`maxLength`, `minimum`/`maximum`, `enum`, `pattern`, `format`, `additionalProperties: false`, array `minItems`/`maxItems`.
-- Unit: negative case expected-status resolves `x-spectest.status` override → lowest documented `4xx` → skip-with-reason, in that order.
+- Unit: every mutated payload fails Ajv validation against the request schema; a mutation that still validates (e.g. constraint loosened by an `allOf` merge) is discarded as skip-with-reason, not emitted.
+- Unit: mutation seeding uses the first example key by default and honors `x-spectest.negative.seedExample`; fields with `{{...}}` generator placeholders in the seed are not mutated.
+- Unit: negative case expected-status resolves `x-spectest.negative.status` override → lowest documented `4xx` → skip-with-reason, in that order.
+- Regression: an operation that is a `links` source keeps resolving to exactly one generated id after synthetic keys are injected (synthetic keys excluded from `generatedIdsForEntry`), so dependents' auto-derived `dependsOn`/`beforeSend` are unchanged.
+- Regression (refactor): resolve-once refactor alone (features disabled) produces loader output byte-identical to pre-refactor v2 behavior.
 - Unit: synthesizer produces schema-valid values for primitive types/formats/bounds and explicitly skips (not guesses) unsupported compositions.
 - Unit: fuzz generation is deterministic given a seed (same seed ⇒ same generated values across two loads) and the seed is surfaced in output/logs for reproduction.
 - Unit: an operation tagged as having real side effects is never auto-included in negative/fuzz generation without an explicit per-operation opt-in.
@@ -108,6 +136,8 @@ Sequencing rationale: Phase 1 alone (mutate-from-existing-example, body only) de
 - Regression: with both features disabled (the default), loader output is byte-identical to today's v2 behavior.
 - Integration: `--negative-tests`/`--fuzz-tests` against a real fixture spec produce the expected count of additional tagged tests, filterable via `--tags`.
 
-## Recommendation
+## Decision
 
-Build Phases 1–2 first (negative testing anchored on existing hand-written examples plus parameter coverage) as a self-contained increment — it's the highest-value, lowest-risk slice and needs no synthesizer. Treat Phase 3 (the synthesizer) as the real go/no-go decision point, since it's where effort and "confidently correct" risk both jump; revisit Phases 4–5 based on how Phase 3 lands. Do not start Phase 5 without a separate, explicit decision given the real-side-effect risk called out above.
+**Phases 1–2 are greenlit (2026-07-08)** as a self-contained increment — negative testing anchored on existing hand-written examples, body plus query/cookie parameters. It's the highest-value, lowest-risk slice and needs no synthesizer. Phase 1 explicitly includes the resolve-once refactor and the synthetic-key exclusion from link resolution as its first deliverables, gated by the byte-identical-when-disabled regression test.
+
+Phase 3 (the synthesizer) remains the real go/no-go decision point, since it's where effort and "confidently correct" risk both jump; revisit Phases 4–5 based on how Phase 3 lands. Do not start Phase 5 without a separate, explicit decision given the real-side-effect risk called out above.

@@ -1,0 +1,25 @@
+openapi: 3.0.3
+info:
+  title: Response Schema Fixture
+  version: 1.0.0
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { name: "gizmo" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: ["id", "name"]
+                properties:
+                  id: { type: integer }
+                  name: { type: string }
+                  deletedAt: { type: string, nullable: true }

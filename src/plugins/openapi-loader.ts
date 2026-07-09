@@ -824,11 +824,7 @@ async function buildTestForExample(
       (test.response as any).status = response.status;
     }
     if (response.schema) {
-      test.response!.schema = {
-        __spectestJsonSchema: true,
-        schema: response.schema,
-        openapiVersion: doc.openapi,
-      };
+      test.response!.schema = response.schema;
     } else if (response.example !== undefined) {
       test.response!.json = response.example;
     }

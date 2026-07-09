@@ -64,7 +64,7 @@ x-spectest:
     "product.domainName": uniqueDomain
 ```
 
-An operation with no `x-spectest` behaves exactly as in v1. Deliberately one extension key, not several scattered `x-spectest-*` keys, so there's one place to look. (`response.schema.__spectestJsonSchema` stays an internal marker, not spec-facing.)
+An operation with no `x-spectest` behaves exactly as in v1. Deliberately one extension key, not several scattered `x-spectest-*` keys, so there's one place to look. (`response.schema` is emitted as the spec's raw Schema Object — see `unified-response-schema-validation.md`.)
 
 ### 4. Named hook registry — the bridge to real side effects
 

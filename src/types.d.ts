@@ -6,7 +6,7 @@ export interface CaseRequest extends RequestInit {
 export interface CaseResponse extends Partial<Response> {
   /** Expected JSON payload for assertion */
   json?: any;
-  /** Zod or JSON schema to validate the response body */
+  /** Zod schema, or a raw JSON Schema / OpenAPI Schema Object, to validate the response body */
   schema?: any;
   /** Expected headers. If the value is boolean true, header presence is asserted */
   headers?: Record<string, string | boolean>;

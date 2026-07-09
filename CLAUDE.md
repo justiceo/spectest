@@ -46,7 +46,7 @@ Turns spec operations into `TestCase`s without writing files. Key behaviors to k
 
 ### Response validation (`cli.ts: runTest` / `validateWithSchema`)
 
-A test's `response.schema` can be either a Zod schema (`.safeParse`) or a JSON Schema wrapped as `{ __spectestJsonSchema: true, schema, openapiVersion }`. `normalizeOpenApiSchema` strips OpenAPI-only schema keywords (`nullable`, `example`, `discriminator`, etc.) and rewrites `nullable: true` into `type: [..., 'null']`/`anyOf` before handing off to Ajv (`Ajv2020` for 3.1 docs, `Ajv` for 3.0).
+A test's `response.schema` can be either a Zod schema (`.safeParse`) or a raw JSON Schema / OpenAPI 3.0/3.1 Schema Object — no wrapper needed, `.safeParse` presence is the only discriminator. All non-Zod schemas compile under a single module-scope `Ajv2020` instance. `normalizeOpenApiSchema` strips OpenAPI-only schema keywords (`nullable`, `example`, `discriminator`, etc.), rewrites `nullable: true` into `type: [..., 'null']`/`anyOf`, and converts OpenAPI 3.0's boolean-style `exclusiveMinimum`/`exclusiveMaximum` into 2020-12's numeric form, before handing off to Ajv.
 
 ### HTTP recording (`recording-cassette.ts`, `recording-preload.ts`, `recordings.ts`, `server.ts`)
 

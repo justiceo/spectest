@@ -207,3 +207,19 @@ test('coverage report marks an operation uncovered when nothing exercises it', a
   assert.equal(rows[0].operationId, 'getTodo');
   assert.equal(rows[0].status.kind, 'uncovered');
 });
+
+// A response schema is emitted as the spec's raw Schema Object, no __spectestJsonSchema/openapiVersion wrapper.
+test("generated test's response.schema equals the spec's raw schema object, unwrapped", async () => {
+  const suite = await loadOpenApiSuite(fixture('response-schema.yaml'), {});
+  const createWidget = byOperationId(suite.tests, 'createWidget');
+  assert.deepEqual(createWidget.response?.schema, {
+    type: 'object',
+    required: ['id', 'name'],
+    properties: {
+      id: { type: 'integer' },
+      name: { type: 'string' },
+      deletedAt: { type: 'string', nullable: true },
+    },
+  });
+  assert.equal((createWidget.response?.schema as any).__spectestJsonSchema, undefined);
+});

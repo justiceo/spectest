@@ -395,6 +395,24 @@ export default tests
 
 With `schema`, you can describe the shape of the data while allowing it to take on different literal values. You can use both `json` and `schema` for assertions in the same test case. 
 
+`schema` also accepts a raw JSON Schema (or OpenAPI 3.0/3.1 Schema Object) directly — no wrapper needed:
+
+```js
+response: {
+  status: 201,
+  schema: {
+    type: 'object',
+    required: ['id', 'title'],
+    properties: {
+      id: { type: 'integer' },
+      title: { type: 'string' },
+    },
+  },
+},
+```
+
+OpenAPI 3.0/3.1 Schema Objects work unmodified, including `nullable`, `example`, and boolean-style `exclusiveMinimum`/`exclusiveMaximum` — the same normalization the OpenAPI loader already applies to spec-generated tests applies here too.
+
 ### Controlling concurrency
 
 By default, test requests are sent in parallel, if your API calls other APIs during test, this might result in unintentionally spamming that 3P backend.  To avoid this, set `rps` in `spectest.config.js` or pass `--rps=<number>` on the command line. A rate limiter ensures that no more than the configured number of requests are sent each second.

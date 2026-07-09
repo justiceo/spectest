@@ -2,7 +2,6 @@ import { existsSync, realpathSync } from 'fs';
 import { readFile, readdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import Ajv from 'ajv';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 
@@ -630,28 +629,19 @@ function isCancellationError(error: any, signal?: AbortSignal): boolean {
   );
 }
 
-function validateWithSchema(data, schema) {
-  if (schema?.__spectestJsonSchema) {
-    return validateWithJsonSchema(data, schema.schema, schema.openapiVersion);
-  }
-  if (typeof schema.safeParse !== 'function') {
-    return { success: false, errors: ['response schema is not a valid zod schema'] };
-  }
-  const result = schema.safeParse(data);
-  return {
-    success: result.success,
-    errors: result.success ? [] : result.error.issues.map((i) => i.message),
-  };
-}
+const ajv2020 = new Ajv2020({ allErrors: true, strict: false });
+addFormats(ajv2020);
 
-function validateWithJsonSchema(data, schema, openapiVersion?: string) {
+export function validateWithSchema(data, schema) {
+  if (typeof schema?.safeParse === 'function') {
+    const result = schema.safeParse(data);
+    return {
+      success: result.success,
+      errors: result.success ? [] : result.error.issues.map((i) => i.message),
+    };
+  }
   try {
-    const jsonSchema = normalizeOpenApiSchema(schema);
-    const ajv = String(openapiVersion || '').startsWith('3.1.')
-      ? new Ajv2020({ allErrors: true, strict: false })
-      : new Ajv({ allErrors: true, strict: false });
-    addFormats(ajv);
-    const validate = ajv.compile(jsonSchema);
+    const validate = ajv2020.compile(normalizeOpenApiSchema(schema));
     const success = validate(data);
     return {
       success: Boolean(success),
@@ -665,7 +655,7 @@ function validateWithJsonSchema(data, schema, openapiVersion?: string) {
   }
 }
 
-function normalizeOpenApiSchema(schema) {
+export function normalizeOpenApiSchema(schema) {
   if (!schema || typeof schema !== 'object') {
     return schema;
   }
@@ -702,6 +692,20 @@ function normalizeOpenApiSchema(schema) {
       result.anyOf = [...(Array.isArray(nonNullSchema.anyOf) ? nonNullSchema.anyOf : [nonNullSchema]), { type: 'null' }];
       delete result.type;
     }
+  }
+
+  if (schema.exclusiveMinimum === true && typeof schema.minimum === 'number') {
+    result.exclusiveMinimum = schema.minimum;
+    delete result.minimum;
+  } else if (schema.exclusiveMinimum === false) {
+    delete result.exclusiveMinimum;
+  }
+
+  if (schema.exclusiveMaximum === true && typeof schema.maximum === 'number') {
+    result.exclusiveMaximum = schema.maximum;
+    delete result.maximum;
+  } else if (schema.exclusiveMaximum === false) {
+    delete result.exclusiveMaximum;
   }
 
   return result;

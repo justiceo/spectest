@@ -271,6 +271,8 @@ That’s where Spectest was born—out of necessity.
 | `startCmd` | Command to start the test server | `npm run start` |
 | `buildCmd` | Command to build the test server | none |
 | `runningServer` | Handling for an existing server (`reuse`, `fail`, or `kill`) | `reuse` |
+| `serverStartupTimeout` | Max time (ms) to wait for a spawned server to become ready before failing | `30000` |
+| `serverHealthCheckInterval` | Interval (ms) between server readiness health check attempts | `250` |
 | `tags` | String list used for filtering tests | [] |
 | `rps` | Requests per second rate limit | Infinity |
 | `timeout` | Default request timeout in milliseconds | `60000` |

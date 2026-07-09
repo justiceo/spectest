@@ -134,6 +134,8 @@ export interface SpectestConfig {
   startCmd?: string;
   buildCmd?: string;
   runningServer?: RunningServerMode;
+  serverStartupTimeout?: number;
+  serverHealthCheckInterval?: number;
   tags?: string[];
   rps?: number;
   timeout?: number;

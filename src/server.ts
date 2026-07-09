@@ -23,12 +23,15 @@ class Server {
   private startCommand = 'npm run start';
   private serverUrl = 'http://localhost:8080';
   private runningServer: RunningServerMode = 'reuse';
+  private serverStartupTimeout = 30000;
+  private serverHealthCheckInterval = 250;
+  private verbose = false;
   private recording: RecordingServerConfig = { enabled: false };
   private throttle: ThrottleServerConfig = { enabled: false };
 
   private debug(message: string, details?: Record<string, unknown>): void {
+    if (!this.verbose) return;
     const suffix = details ? ` ${JSON.stringify(details)}` : '';
-    // todo: only output when verbose output is enabled.
     console.log(`[spectest:server] ${message}${suffix}`);
   }
 
@@ -49,6 +52,9 @@ class Server {
     buildCmd?: string;
     serverUrl?: string;
     runningServer?: RunningServerMode;
+    serverStartupTimeout?: number;
+    serverHealthCheckInterval?: number;
+    verbose?: boolean;
     recording?: RecordingServerConfig;
     throttle?: ThrottleServerConfig;
   } = {}): void {
@@ -56,6 +62,9 @@ class Server {
     if (cfg.buildCmd) this.setBuildCommand(cfg.buildCmd);
     if (cfg.serverUrl) this.setServerUrl(cfg.serverUrl);
     if (cfg.runningServer) this.runningServer = cfg.runningServer;
+    if (cfg.serverStartupTimeout) this.serverStartupTimeout = cfg.serverStartupTimeout;
+    if (cfg.serverHealthCheckInterval) this.serverHealthCheckInterval = cfg.serverHealthCheckInterval;
+    if (cfg.verbose !== undefined) this.verbose = cfg.verbose;
     if (cfg.recording) this.recording = cfg.recording;
     if (cfg.throttle) this.throttle = cfg.throttle;
     this.debug('configured', {
@@ -63,6 +72,8 @@ class Server {
       startCommand: this.startCommand,
       buildCommand: this.buildCommand || null,
       runningServer: this.runningServer,
+      serverStartupTimeout: this.serverStartupTimeout,
+      serverHealthCheckInterval: this.serverHealthCheckInterval,
       recordingEnabled: this.recording.enabled,
       recordingPreload: this.recording.preloadPath || null,
       throttleEnabled: this.throttle.enabled,
@@ -192,6 +203,11 @@ class Server {
   }
 
   async isRunning(): Promise<boolean> {
+    return (await this.checkHealth()).ready;
+  }
+
+  /** Like isRunning(), but also reports why a failed check failed, for diagnostics. */
+  private async checkHealth(): Promise<{ ready: boolean; reason?: string }> {
     try {
       this.debug('health check started', { url: this.serverUrl });
       const controller = new AbortController();
@@ -201,10 +217,66 @@ class Server {
       const response = await fetch(this.serverUrl, { method: 'HEAD', signal: controller.signal });
       clearTimeout(timeout);
       this.debug('health check completed', { status: response.status });
-      return response.status >= 200 && response.status < 500;
+      const ready = response.status >= 200 && response.status < 500;
+      return ready ? { ready: true } : { ready: false, reason: `received status ${response.status}` };
     } catch (error: any) {
       this.debug('health check failed', { message: error.message });
-      return false;
+      return { ready: false, reason: error.message };
+    }
+  }
+
+  private recentLogsTail(limit = 20): string {
+    if (this.serverLogs.length === 0) return '';
+    const tail = this.serverLogs.slice(-limit);
+    const lines = tail.map((entry) => `[${entry.type}] ${entry.message}`).join('\n');
+    return `\nRecent server output:\n${lines}`;
+  }
+
+  private startupError(message: string): Error {
+    return new Error(`${message}${this.recentLogsTail()}`);
+  }
+
+  private async waitUntilReady(timeoutMs: number, intervalMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const startedAt = Date.now();
+    let attempts = 0;
+    let lastFailureReason = 'no health check attempted yet';
+    let lastProgressLog = startedAt;
+
+    let exitedEarly: { code: number | null; signal: string | null } | null = null;
+    const onExit = (code: number | null, signal: string | null) => {
+      exitedEarly = { code, signal };
+    };
+    this.serverProcess!.once('exit', onExit);
+
+    try {
+      while (Date.now() < deadline) {
+        if (exitedEarly) {
+          const { code, signal } = exitedEarly as { code: number | null; signal: string | null };
+          throw this.startupError(
+            `Server process exited (code ${code}, signal ${signal}) ` +
+            `before becoming ready, after ${Date.now() - startedAt}ms and ${attempts} health check attempt(s).`
+          );
+        }
+        attempts++;
+        const { ready, reason } = await this.checkHealth();
+        if (ready) {
+          this.debug('server ready', { attempts, elapsedMs: Date.now() - startedAt });
+          return;
+        }
+        lastFailureReason = reason || 'no response';
+        if (!this.verbose && Date.now() - lastProgressLog >= 5000) {
+          console.log(`⏳ Still waiting for server... (${((Date.now() - startedAt) / 1000).toFixed(1)}s elapsed)`);
+          lastProgressLog = Date.now();
+        }
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+      throw this.startupError(
+        `Server did not become ready within ${timeoutMs}ms (${attempts} health check attempt(s); ` +
+        `last failure: ${lastFailureReason}).`
+      );
+    } finally {
+      this.serverProcess!.off('exit', onExit);
     }
   }
 
@@ -291,21 +363,17 @@ class Server {
         });
 
         // Wait for server to be ready
-        setTimeout(async () => {
+        (async () => {
           try {
-            if (await this.isRunning()) {
-              console.log('✅ Server is ready');
-              resolve();
-            } else {
-              await this.stop();
-              reject(new Error('Server health check failed'));
-            }
+            await this.waitUntilReady(this.serverStartupTimeout, this.serverHealthCheckInterval);
+            console.log('✅ Server is ready');
+            resolve();
           } catch (error: any) {
-            console.error('Server startup error:', error.message);
+            console.error(`Server startup failed: ${error.message}`);
             await this.stop();
             reject(new Error(`Server startup failed: ${error.message}`));
           }
-        }, 3000);
+        })();
       };
 
       if (this.buildCommand) {

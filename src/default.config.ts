@@ -12,6 +12,8 @@ export default {
   filter: '',
   testOutput: 'summary',
   runningServer: 'reuse',
+  serverStartupTimeout: 30000,
+  serverHealthCheckInterval: 250,
   userAgent: 'chrome_windows',
   proxy: '',
   recording: 'off',

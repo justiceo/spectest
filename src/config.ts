@@ -19,6 +19,8 @@ export interface CliConfig {
   startCmd?: string;
   buildCmd?: string;
   runningServer?: string;
+  serverStartupTimeout?: number;
+  serverHealthCheckInterval?: number;
   tags?: string[];
   rps?: number;
   timeout?: number;
@@ -84,6 +86,19 @@ function parseRunningServer(value: string | undefined): RunningServerMode {
   process.exit(1);
 }
 
+function parsePositiveInt(flag: string, value: string | undefined): number {
+  const parsed = value ? Number(value) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  console.error(`error: ${flag} must be a positive number`);
+  process.exit(1);
+}
+
+function validateConfiguredPositiveInt(key: string, value: unknown): asserts value is number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return;
+  console.error(`error: ${key} must be a positive number`);
+  process.exit(1);
+}
+
 function validateConfiguredMissingRecordingBehavior(value: unknown): asserts value is MissingRecordingBehavior {
   if (value === 'fail' || value === 'record' || value === 'bypass') return;
   console.error('error: missingRecordingBehavior must be "fail", "record", or "bypass"');
@@ -129,6 +144,8 @@ const HELP_OPTIONS: [string, string][] = [
   ['--start-cmd <cmd>', 'Command to start the test server (default: npm run start)'],
   ['--build-cmd <cmd>', 'Command to build the test server'],
   ['--running-server <mode>', "Handling for an existing server: reuse, fail, kill (default: reuse)"],
+  ['--server-startup-timeout <ms>', 'Max time to wait for a spawned server to become ready (default: 30000)'],
+  ['--server-health-check-interval <ms>', 'Interval between server readiness health checks (default: 250)'],
   ['--tags <tag1,tag2>', 'Comma-separated tags used for filtering tests'],
   ['--rps <number>', 'Requests per second rate limit (default: Infinity)'],
   ['--timeout <ms>', 'Default request timeout in milliseconds (default: 60000)'],
@@ -212,6 +229,12 @@ function parseArgs(argv: string[]): CliConfig {
           break;
         case 'running-server':
           raw.runningServer = parseRunningServer(value);
+          break;
+        case 'server-startup-timeout':
+          raw.serverStartupTimeout = parsePositiveInt('--server-startup-timeout', value);
+          break;
+        case 'server-health-check-interval':
+          raw.serverHealthCheckInterval = parsePositiveInt('--server-health-check-interval', value);
           break;
         case 'tags':
           raw.tags = value ? value.split(',').map((t) => t.trim()).filter(Boolean) : [];
@@ -319,6 +342,8 @@ export async function loadConfigFromCliOpts(cliOpts: CliConfig): Promise<CliConf
   cfg = { ...cfg, ...restCliOpts };
   cfg.projectRoot = projectRoot;
   cfg.runningServer = (cfg.runningServer as any) || 'reuse';
+  cfg.serverStartupTimeout = cfg.serverStartupTimeout || 30000;
+  cfg.serverHealthCheckInterval = cfg.serverHealthCheckInterval || 250;
   cfg.recording = (cfg.recording as any) || 'off';
   cfg.recordingFile = cfg.recordingFile || '.spectest/cassette.json';
   cfg.missingRecordingBehavior = (cfg.missingRecordingBehavior as any) || 'fail';
@@ -329,6 +354,8 @@ export async function loadConfigFromCliOpts(cliOpts: CliConfig): Promise<CliConf
   validateConfiguredMissingRecordingBehavior(cfg.missingRecordingBehavior);
   validateConfiguredRecordingExcludeUrls(cfg.recordingExcludeUrls);
   validateConfiguredOutboundThrottle(cfg.outboundThrottle);
+  validateConfiguredPositiveInt('serverStartupTimeout', cfg.serverStartupTimeout);
+  validateConfiguredPositiveInt('serverHealthCheckInterval', cfg.serverHealthCheckInterval);
   if (cfg.recordingFile) {
     cfg.recordingFile = path.resolve(projectRoot, cfg.recordingFile);
   }

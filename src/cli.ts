@@ -72,6 +72,9 @@ async function runAllTests(cfg: any) {
     buildCmd: cfg.buildCmd,
     serverUrl: cfg.baseUrl,
     runningServer: cfg.runningServer,
+    serverStartupTimeout: cfg.serverStartupTimeout,
+    serverHealthCheckInterval: cfg.serverHealthCheckInterval,
+    verbose: cfg.verbose,
     recording: {
       enabled: recordingEnabled,
       preloadPath: fileURLToPath(new URL('./recording-preload.js', import.meta.url)),

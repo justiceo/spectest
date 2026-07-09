@@ -18,5 +18,6 @@ export default {
   recordingFile: '.spectest/cassette.json',
   missingRecordingBehavior: 'fail',
   recordingExcludeUrls: [],
+  outboundThrottle: [],
   openapiAuth: {},
 } satisfies SpectestConfig;

@@ -4,6 +4,7 @@ import defaultConfig from './default.config.js';
 import type {
   MissingRecordingBehavior,
   OpenApiRequestMutator,
+  OutboundThrottleRule,
   RecordingMode,
   RecordingUrlExclusion,
   RunningServerMode,
@@ -35,6 +36,7 @@ export interface CliConfig {
   recordingFile?: string;
   missingRecordingBehavior?: MissingRecordingBehavior;
   recordingExcludeUrls?: RecordingUrlExclusion[];
+  outboundThrottle?: OutboundThrottleRule[];
   openapi?: string;
   openapiServer?: string | number;
   openapiAuth?: Record<string, OpenApiRequestMutator>;
@@ -98,6 +100,23 @@ function validateConfiguredRecordingExcludeUrls(value: unknown): asserts value i
   });
   if (invalid !== undefined) {
     console.error('error: recordingExcludeUrls entries must be strings, RegExp objects, or functions');
+    process.exit(1);
+  }
+}
+
+function validateConfiguredOutboundThrottle(value: unknown): asserts value is OutboundThrottleRule[] {
+  if (!Array.isArray(value)) {
+    console.error('error: outboundThrottle must be an array');
+    process.exit(1);
+  }
+  const invalid = value.find((item) => {
+    if (!item || typeof item !== 'object') return true;
+    const matchOk = typeof item.match === 'string' || item.match instanceof RegExp;
+    const rpsOk = typeof item.rps === 'number' && item.rps > 0;
+    return !matchOk || !rpsOk;
+  });
+  if (invalid !== undefined) {
+    console.error('error: outboundThrottle entries must be { match: string | RegExp, rps: number > 0, name?: string }');
     process.exit(1);
   }
 }
@@ -304,10 +323,12 @@ export async function loadConfigFromCliOpts(cliOpts: CliConfig): Promise<CliConf
   cfg.recordingFile = cfg.recordingFile || '.spectest/cassette.json';
   cfg.missingRecordingBehavior = (cfg.missingRecordingBehavior as any) || 'fail';
   cfg.recordingExcludeUrls = cfg.recordingExcludeUrls || [];
+  cfg.outboundThrottle = cfg.outboundThrottle || [];
   validateConfiguredTestOutput(cfg.testOutput);
   validateConfiguredRecording(cfg.recording);
   validateConfiguredMissingRecordingBehavior(cfg.missingRecordingBehavior);
   validateConfiguredRecordingExcludeUrls(cfg.recordingExcludeUrls);
+  validateConfiguredOutboundThrottle(cfg.outboundThrottle);
   if (cfg.recordingFile) {
     cfg.recordingFile = path.resolve(projectRoot, cfg.recordingFile);
   }

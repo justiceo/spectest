@@ -77,6 +77,11 @@ async function runAllTests(cfg: any) {
       preloadPath: fileURLToPath(new URL('./recording-preload.js', import.meta.url)),
       cassette: recordingCassette || undefined,
     },
+    throttle: {
+      enabled: (cfg.outboundThrottle || []).length > 0,
+      preloadPath: fileURLToPath(new URL('./throttle-preload.js', import.meta.url)),
+      rules: cfg.outboundThrottle,
+    },
   });
 
   const rateLimiter = new RateLimiter(cfg.rps || Infinity);

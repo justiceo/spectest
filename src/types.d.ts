@@ -88,6 +88,19 @@ export type RecordingUrlExclusion =
   | RegExp
   | ((url: URL, request: SerializedHttpRequest) => boolean);
 
+/**
+ * Caps outbound requests the Node SUT process makes to a matching backend
+ * (e.g. a rate-limited third party like Openprovider) at `rps` requests per
+ * second. `match` is tested against the full outbound request URL: a string
+ * is a substring match, a RegExp is tested directly. The first matching rule
+ * applies; later rules are not consulted for a request that already matched.
+ */
+export interface OutboundThrottleRule {
+  match: string | RegExp;
+  rps: number;
+  name?: string;
+}
+
 export type OpenApiRequestMutation = {
   headers?: HeadersInit;
   query?: Record<string, string>;
@@ -138,6 +151,7 @@ export interface SpectestConfig {
   recordingFile?: string;
   missingRecordingBehavior?: MissingRecordingBehavior;
   recordingExcludeUrls?: RecordingUrlExclusion[];
+  outboundThrottle?: OutboundThrottleRule[];
   openapi?: string;
   openapiServer?: string | number;
   openapiAuth?: Record<string, OpenApiAuthEntry>;

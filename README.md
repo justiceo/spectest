@@ -285,6 +285,7 @@ That’s where Spectest was born—out of necessity.
 | `recordingFile` | JSON cassette path used for HTTP recordings | `.spectest/cassette.json` |
 | `missingRecordingBehavior` | Behavior when replay cannot find a cassette entry (`fail`, `record`, or `bypass`) | `fail` |
 | `recordingExcludeUrls` | URL patterns that always bypass HTTP cassette handling | `[]` |
+| `outboundThrottle` | Rate limit rules capping outbound requests the Node SUT process makes to matching backends | `[]` |
 | `openapi` | Path to an OpenAPI 3.0/3.1 document to load directly | none |
 | `openapiServer` | Server URL or index to select when an OpenAPI document has multiple `servers` entries | none |
 | `openapiAuth` | Map of OpenAPI security scheme names to request mutation hooks, or to a named-variant map (`{ valid, expired, ... }`) | `{}` |
@@ -514,6 +515,38 @@ afterAll(async () => {
   await recordings.dispose();
 });
 ```
+
+### Throttling outbound backend calls
+
+`rps` limits how fast *Spectest* sends requests to your SUT — it has no visibility into what the
+SUT does internally. If an endpoint under test fans out to a rate-limited third party (e.g. a
+domain-registration endpoint that makes several calls to a registrar API per request), running
+tests concurrently can still burst well past that backend's own limit even with `rps` set.
+
+`outboundThrottle` caps outbound requests the Node SUT process itself makes to a matching backend.
+It works the same way as HTTP recording: the SUT process is started with a preload that
+transparently intercepts its outbound `fetch`/`http`/`https`/XHR calls, so no application code
+changes are needed. Matching requests are delayed until a token is available and then sent for
+real — nothing is mocked or short-circuited.
+
+```js
+// spectest.config.js
+
+export default {
+  baseUrl: 'http://localhost:3000',
+  startCmd: 'npm run start',
+  runningServer: 'kill',
+  outboundThrottle: [
+    { match: 'api.openprovider.eu', rps: 5, name: 'openprovider' },
+    { match: /^https:\/\/api\.example\.com\/v1\//, rps: 20 },
+  ],
+};
+```
+
+Each rule's `match` is tested against the full outbound request URL: a string is a substring test,
+a `RegExp` is tested directly. The first matching rule applies; requests that don't match any rule
+pass through unthrottled. Like recording, this requires Spectest to start the Node server process,
+so `runningServer: 'reuse'` is not compatible with `outboundThrottle`.
 
 ### Filtering test cases
 

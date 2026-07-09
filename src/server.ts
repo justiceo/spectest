@@ -1,11 +1,18 @@
 import { spawn, spawnSync } from 'child_process';
 import type { HttpRecordingCassette, RecordingDecision, SerializedHttpRequest, SerializedHttpResponse } from './recording-cassette';
-import type { RunningServerMode } from './types.js';
+import { THROTTLE_CONFIG_ENV_VAR, serializeThrottleRules } from './throttle-config.js';
+import type { OutboundThrottleRule, RunningServerMode } from './types.js';
 
 interface RecordingServerConfig {
   enabled: boolean;
   preloadPath?: string;
   cassette?: HttpRecordingCassette;
+}
+
+interface ThrottleServerConfig {
+  enabled: boolean;
+  preloadPath?: string;
+  rules?: OutboundThrottleRule[];
 }
 
 class Server {
@@ -17,6 +24,7 @@ class Server {
   private serverUrl = 'http://localhost:8080';
   private runningServer: RunningServerMode = 'reuse';
   private recording: RecordingServerConfig = { enabled: false };
+  private throttle: ThrottleServerConfig = { enabled: false };
 
   private debug(message: string, details?: Record<string, unknown>): void {
     const suffix = details ? ` ${JSON.stringify(details)}` : '';
@@ -42,12 +50,14 @@ class Server {
     serverUrl?: string;
     runningServer?: RunningServerMode;
     recording?: RecordingServerConfig;
+    throttle?: ThrottleServerConfig;
   } = {}): void {
     if (cfg.startCommand) this.setStartCommand(cfg.startCommand);
     if (cfg.buildCmd) this.setBuildCommand(cfg.buildCmd);
     if (cfg.serverUrl) this.setServerUrl(cfg.serverUrl);
     if (cfg.runningServer) this.runningServer = cfg.runningServer;
     if (cfg.recording) this.recording = cfg.recording;
+    if (cfg.throttle) this.throttle = cfg.throttle;
     this.debug('configured', {
       serverUrl: this.serverUrl,
       startCommand: this.startCommand,
@@ -55,6 +65,8 @@ class Server {
       runningServer: this.runningServer,
       recordingEnabled: this.recording.enabled,
       recordingPreload: this.recording.preloadPath || null,
+      throttleEnabled: this.throttle.enabled,
+      throttlePreload: this.throttle.preloadPath || null,
     });
   }
 
@@ -207,6 +219,10 @@ class Server {
         this.debug('recording cannot reuse existing server');
         throw new Error('HTTP recording requires Spectest to start the Node server; runningServer: "reuse" cannot be used with recording enabled');
       }
+      if (this.throttle.enabled && this.runningServer === 'reuse') {
+        this.debug('outbound throttling cannot reuse existing server');
+        throw new Error('Outbound request throttling requires Spectest to start the Node server; runningServer: "reuse" cannot be used with outboundThrottle configured');
+      }
       if (this.runningServer === 'reuse') {
         console.log(`✅ Using existing server at ${this.serverUrl}`);
         this.startedByHelper = false;
@@ -226,13 +242,21 @@ class Server {
         console.log('✅ Starting server...');
         this.startedByHelper = true;
         const [cmd, ...args] = this.startCommand.split(' ');
-        const nodeOptions = this.recording.enabled
-          ? `${process.env.NODE_OPTIONS || ''} --import ${this.recording.preloadPath}`.trim()
+        const importFlags: string[] = [];
+        if (this.recording.enabled && this.recording.preloadPath) {
+          importFlags.push(`--import ${this.recording.preloadPath}`);
+        }
+        if (this.throttle.enabled && this.throttle.preloadPath) {
+          importFlags.push(`--import ${this.throttle.preloadPath}`);
+        }
+        const nodeOptions = importFlags.length
+          ? [process.env.NODE_OPTIONS, ...importFlags].filter(Boolean).join(' ').trim()
           : process.env.NODE_OPTIONS;
         this.debug('spawning server process', {
           command: cmd,
           args,
           recordingEnabled: this.recording.enabled,
+          throttleEnabled: this.throttle.enabled,
           nodeOptions: nodeOptions || null,
         });
         this.serverProcess = spawn(cmd, args, {
@@ -241,6 +265,9 @@ class Server {
             ...process.env,
             PORT: '8080',
             NODE_OPTIONS: nodeOptions,
+            ...(this.throttle.enabled && this.throttle.rules?.length
+              ? { [THROTTLE_CONFIG_ENV_VAR]: serializeThrottleRules(this.throttle.rules) }
+              : {}),
           },
         });
 

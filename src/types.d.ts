@@ -105,6 +105,16 @@ export type OpenApiRequestMutation = {
   headers?: HeadersInit;
   query?: Record<string, string>;
   cookies?: Record<string, string>;
+  /**
+   * Set to 'include' to have the generated request send the ambient session
+   * cookie captured from any earlier response in the run (the same
+   * mechanism hand-written `credentials: 'include'` test cases use) instead
+   * of a static cookie value baked in at suite-load time. Needed for auth
+   * schemes whose valid value can only be obtained by actually running a
+   * login flow (e.g. magic-link), since openapiAuth hooks execute before
+   * the server under test has been started.
+   */
+  credentials?: RequestCredentials;
 };
 
 export type OpenApiRequestMutator = (ctx: {

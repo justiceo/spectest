@@ -78,6 +78,19 @@ test('generator placeholders resolve to distinct values across loads and stay st
   assert.equal(widgetA.request?.body.id, widgetA.request?.body.id);
 });
 
+// generate-command.ts scaffolds a static file, so it asks loadOpenApiSuite to
+// keep {{uuid}}/{{timestamp}}/{{shortId}} tokens literal (it re-rolls them at
+// send time itself) instead of baking in a one-time value that would replay
+// forever across separate runs of the generated file.
+test('preservePlaceholders keeps generator tokens literal instead of resolving them', async () => {
+  const suite = await loadOpenApiSuite(fixture('generators.yaml'), {}, { preservePlaceholders: true });
+  const widget = byOperationId(suite.tests, 'createWidget');
+
+  assert.equal(widget.request?.body.id, '{{uuid}}');
+  assert.equal(widget.request?.body.createdAt, '{{timestamp}}');
+  assert.equal(widget.request?.body.slug, '{{shortId}}');
+});
+
 // x-spectest.generate (path-keyed) overrides specific fields on an otherwise-literal example body.
 test('x-spectest.generate overrides path-keyed fields on the request body', async () => {
   const suite = await loadOpenApiSuite(fixture('generators.yaml'), {});

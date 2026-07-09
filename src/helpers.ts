@@ -69,6 +69,48 @@ function recording(tests, mode) {
   });
 }
 
+// Mirrors openapi-loader's GENERATORS/GENERATOR_PLACEHOLDER: a `beforeSend`
+// hook that re-rolls `{{uuid}}`/`{{timestamp}}`/`{{shortId}}` tokens in a
+// request's url/headers/data right before each send. `spectest generate
+// openapi-tests` wires this into any scaffolded test whose example still
+// contains one of these tokens, so re-running the same generated file
+// produces a fresh value each time instead of replaying whatever was baked
+// in at generation time (which breaks "must not already exist" endpoints
+// like signup on the second run).
+const PLACEHOLDER_GENERATORS = {
+  uuid: () => crypto.randomUUID(),
+  timestamp: () => String(Date.now()),
+  shortId: () => Math.random().toString(36).slice(2, 10),
+};
+
+const PLACEHOLDER_PATTERN = /\{\{(uuid|timestamp|shortId)\}\}/g;
+
+function resolvePlaceholders(value) {
+  if (typeof value === 'string') {
+    return value.replace(PLACEHOLDER_PATTERN, (_match, name) => PLACEHOLDER_GENERATORS[name]());
+  }
+  if (Array.isArray(value)) {
+    return value.map(resolvePlaceholders);
+  }
+  if (value && typeof value === 'object') {
+    const result = {};
+    for (const [key, nested] of Object.entries(value)) {
+      result[key] = resolvePlaceholders(nested);
+    }
+    return result;
+  }
+  return value;
+}
+
+function regenerateExampleData(config) {
+  return {
+    ...config,
+    url: resolvePlaceholders(config.url),
+    headers: resolvePlaceholders(config.headers),
+    data: resolvePlaceholders(config.data),
+  };
+}
+
 export {
   composeBeforeSend,
   composePostTest,
@@ -80,4 +122,5 @@ export {
   setup,
   teardown,
   recording,
+  regenerateExampleData,
 };

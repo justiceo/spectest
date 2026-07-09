@@ -488,6 +488,7 @@ function mergeCookieHeader(headers: Record<string, string>, cookies: Record<stri
 function applyMutation(
   headers: Record<string, string>,
   query: URLSearchParams,
+  requestMeta: { credentials?: RequestCredentials },
   mutation?: OpenApiRequestMutation | void
 ): void {
   if (!mutation) return;
@@ -503,6 +504,9 @@ function applyMutation(
   }
   if (mutation.cookies) {
     mergeCookieHeader(headers, mutation.cookies);
+  }
+  if (mutation.credentials) {
+    requestMeta.credentials = mutation.credentials;
   }
 }
 
@@ -525,6 +529,7 @@ async function applySecurity(
   pathKey: string,
   headers: Record<string, string>,
   query: URLSearchParams,
+  requestMeta: { credentials?: RequestCredentials },
   securityOverride?: SecurityOverride
 ): Promise<void> {
   if (securityOverride?.mode === 'none') return;
@@ -550,7 +555,7 @@ async function applySecurity(
         method: method.toUpperCase(),
         path: pathKey,
       });
-      applyMutation(headers, query, mutation);
+      applyMutation(headers, query, requestMeta, mutation);
     }
     return;
   }
@@ -740,7 +745,8 @@ async function buildTestForExample(
   entry: OperationEntry,
   key: string | undefined,
   linkIndex: Map<string, LinkSource[]>,
-  operationIdToGeneratedIds: Map<string, string[]>
+  operationIdToGeneratedIds: Map<string, string[]>,
+  preservePlaceholders: boolean
 ): Promise<TestCase> {
   const { method, pathKey, operation, rootParameters, operationId: rawOperationId } = entry;
   const fallbackName = operation.summary || operation.operationId || `${method.toUpperCase()} ${pathKey}`;
@@ -774,8 +780,16 @@ async function buildTestForExample(
 
     const { value: rawBody, pendingLink: bodyPendingLink } = buildRequestBody(resolvedOperation, key, bodyCandidate);
     if (bodyPendingLink) pendingLinks.push(bodyPendingLink);
+    // When scaffolding a static file (preservePlaceholders), keep `{{uuid}}`/
+    // `{{timestamp}}`/`{{shortId}}` tokens literal instead of baking in a
+    // one-time value: generate-command.ts detects them and wires a
+    // beforeSend that re-rolls them on every send, so re-running the
+    // generated file doesn't replay the same "must not already exist" value
+    // (e.g. a signup email) forever.
     const body =
-      rawBody !== undefined ? applyGeneratorOverrides(resolveGeneratorPlaceholders(rawBody), xSpectest.generate) : rawBody;
+      rawBody !== undefined
+        ? applyGeneratorOverrides(preservePlaceholders ? rawBody : resolveGeneratorPlaceholders(rawBody), xSpectest.generate)
+        : rawBody;
 
     const response = chooseResponse(resolvedOperation, key, xSpectest.status);
     const endpointWithoutQuery = `${serverPrefix}${endpointPath}`;
@@ -786,7 +800,8 @@ async function buildTestForExample(
         : xSpectest.security
           ? { mode: 'variant', variant: xSpectest.security }
           : undefined;
-    await applySecurity(cfg, doc, resolvedOperation, method, pathKey, headers, query, securityOverride);
+    const requestMeta: { credentials?: RequestCredentials } = {};
+    await applySecurity(cfg, doc, resolvedOperation, method, pathKey, headers, query, requestMeta, securityOverride);
 
     const test: TestCase = {
       name,
@@ -801,6 +816,9 @@ async function buildTestForExample(
     };
     if (body !== undefined) {
       test.request!.body = body;
+    }
+    if (requestMeta.credentials) {
+      (test.request as any).credentials = requestMeta.credentials;
     }
     if (response.status !== undefined) {
       (test.response as any).status = response.status;
@@ -900,7 +918,11 @@ function generatedIdsForEntry(entry: OperationEntry): string[] {
   return entry.exampleKeys.length ? entry.exampleKeys.map((k) => `${entry.operationId}+${k}`) : [entry.operationId];
 }
 
-export async function loadOpenApiSuite(filePath: string, cfg: SpectestConfig): Promise<Suite> {
+export async function loadOpenApiSuite(
+  filePath: string,
+  cfg: SpectestConfig,
+  opts: { preservePlaceholders?: boolean } = {}
+): Promise<Suite> {
   const doc = await parseOpenApiDoc(filePath);
   const name = doc.info?.title || path.relative(process.cwd(), filePath);
 
@@ -917,7 +939,17 @@ export async function loadOpenApiSuite(filePath: string, cfg: SpectestConfig): P
   for (const entry of operationEntries) {
     const keys: (string | undefined)[] = entry.exampleKeys.length ? entry.exampleKeys : [undefined];
     for (const key of keys) {
-      tests.push(await buildTestForExample(doc, cfg, entry, key, linkIndex, operationIdToGeneratedIds));
+      tests.push(
+        await buildTestForExample(
+          doc,
+          cfg,
+          entry,
+          key,
+          linkIndex,
+          operationIdToGeneratedIds,
+          opts.preservePlaceholders || false
+        )
+      );
     }
   }
 

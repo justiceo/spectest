@@ -1,0 +1,48 @@
+#!/usr/bin/env node
+// Enforces Conventional Commits (https://www.conventionalcommits.org) on the commit subject line.
+// Install once per clone: git config core.hooksPath .githooks
+
+import { readFileSync } from "node:fs";
+
+const msgFile = process.argv[2];
+const message = readFileSync(msgFile, "utf8");
+const subject = message.split("\n")[0].trim();
+
+// Merge commits and fixups are exempt.
+if (/^(Merge |Revert |fixup!|squash!)/.test(subject)) {
+  process.exit(0);
+}
+
+const TYPES = [
+  "feat",
+  "fix",
+  "docs",
+  "style",
+  "refactor",
+  "perf",
+  "test",
+  "build",
+  "ci",
+  "chore",
+  "revert",
+];
+
+const pattern = new RegExp(`^(${TYPES.join("|")})(\\([^)]+\\))?!?: .+`);
+
+if (!pattern.test(subject)) {
+  console.error(`
+Commit message does not follow Conventional Commits:
+
+  "${subject}"
+
+Expected format:
+
+  <type>(<optional scope>): <description>
+
+Allowed types: ${TYPES.join(", ")}
+Example: feat(openapi): add negative testing for schema mutation
+
+Breaking changes: append "!" after the type/scope, e.g. "feat!: ..."
+`);
+  process.exit(1);
+}

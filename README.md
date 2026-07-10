@@ -729,3 +729,13 @@ And you can create your own helpers to reduce repetition of common request/respo
 Test cases can be written in `.js`, plain `.json` and `.yaml` files, or `.mjs` for ESM and `.cjs` for CommonJs modules.
 
 Typescript (`.ts`) files are not yet supported, you'd need to transpile them to any of the supported Js modules above.
+
+## Contributing
+
+After cloning, run this once to enable the repo's git hooks:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+This activates a `commit-msg` hook that enforces [Conventional Commits](https://www.conventionalcommits.org) (`type(scope): description`, e.g. `feat(openapi): add negative testing for schema mutation`) on every commit. Commit messages drive the automated changelog and GitHub release generated on each `package.json` version bump, so following the convention keeps that output readable.

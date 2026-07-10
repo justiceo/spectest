@@ -5,6 +5,7 @@ import { load as parseYaml } from 'js-yaml';
 import type { Plugin } from '../plugin-api.js';
 import type {
   OpenApiBeforeSendHook,
+  OpenApiNegativeTestsConfig,
   OpenApiPostTestHook,
   OpenApiRequestMutation,
   OpenApiRequestMutator,
@@ -12,6 +13,10 @@ import type {
   Suite,
   TestCase,
 } from '../types.js';
+import { mutateObjectSchema, mutateValueForParam } from './openapi-schema-mutator.js';
+import { validateAgainstSchema } from '../openapi-schema-validate.js';
+
+const NEGATIVE_KEY_PREFIX = '__negative-';
 
 const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']);
 const DEFAULT_PARAM_STYLE: Record<string, { style: string; explode: boolean }> = {
@@ -28,6 +33,13 @@ class OpenApiSkip extends Error {
   }
 }
 
+type NegativeTestOverride = {
+  enabled?: boolean;
+  fields?: string[];
+  status?: number;
+  seedExample?: string;
+};
+
 type NormalizedXSpectest = {
   status?: number;
   tags?: string[];
@@ -39,6 +51,7 @@ type NormalizedXSpectest = {
   postTest?: string;
   security?: string;
   generate?: Record<string, string>;
+  negative?: NegativeTestOverride;
 };
 
 type PendingLink = {
@@ -59,6 +72,10 @@ type OperationEntry = {
   rootParameters: any[];
   operationId: string;
   exampleKeys: string[];
+  resolvedOperation?: any;
+  resolvedParameters?: any[];
+  bodyJsonContent?: any;
+  resolutionError?: OpenApiSkip;
 };
 
 type SecurityOverride = { mode: 'none' } | { mode: 'variant'; variant: string };
@@ -197,6 +214,14 @@ function normalizeXSpectest(raw: any): NormalizedXSpectest {
   if (typeof raw.postTest === 'string') result.postTest = raw.postTest;
   if (typeof raw.security === 'string') result.security = raw.security;
   if (raw.generate && typeof raw.generate === 'object') result.generate = raw.generate;
+  if (raw.negative && typeof raw.negative === 'object') {
+    const negative: NegativeTestOverride = {};
+    if (typeof raw.negative.enabled === 'boolean') negative.enabled = raw.negative.enabled;
+    if (Array.isArray(raw.negative.fields)) negative.fields = raw.negative.fields.map(String);
+    if (typeof raw.negative.status === 'number') negative.status = raw.negative.status;
+    if (typeof raw.negative.seedExample === 'string') negative.seedExample = raw.negative.seedExample;
+    result.negative = negative;
+  }
   return result;
 }
 
@@ -709,15 +734,13 @@ function resolveLinkCandidatesForParams(
   return { paramCandidates, bodyCandidate };
 }
 
-function collectLinks(doc: any, operationEntries: OperationEntry[]): Map<string, LinkSource[]> {
+function collectLinks(operationEntries: OperationEntry[]): Map<string, LinkSource[]> {
   const index = new Map<string, LinkSource[]>();
   for (const entry of operationEntries) {
-    let resolvedOperation: any;
-    try {
-      resolvedOperation = resolveRefs(entry.operation, doc);
-    } catch {
+    if (entry.resolutionError || !entry.resolvedOperation) {
       continue;
     }
+    const resolvedOperation = entry.resolvedOperation;
     const responses = resolvedOperation.responses || {};
     for (const response of Object.values(responses)) {
       const links = (response as any)?.links;
@@ -748,19 +771,20 @@ async function buildTestForExample(
   operationIdToGeneratedIds: Map<string, string[]>,
   preservePlaceholders: boolean
 ): Promise<TestCase> {
-  const { method, pathKey, operation, rootParameters, operationId: rawOperationId } = entry;
+  const { method, pathKey, operation, operationId: rawOperationId } = entry;
   const fallbackName = operation.summary || operation.operationId || `${method.toUpperCase()} ${pathKey}`;
   const testOperationId = key ? `${rawOperationId}+${key}` : rawOperationId;
   const name = key ? `${fallbackName} — ${key}` : fallbackName;
   const baseTags = [...new Set([...(operation.tags || []), 'openapi'].map(String))];
 
+  if (entry.resolutionError) {
+    return skippedTest(name, testOperationId, pathKey, baseTags, entry.resolutionError.message);
+  }
+
   try {
-    const resolvedOperation = resolveRefs(operation, doc);
-    const parameters = [
-      ...rootParameters.map((param: any) => resolveRefs(param, doc)),
-      ...(resolvedOperation.parameters || []).map((param: any) => resolveRefs(param, doc)),
-    ];
-    const bodyJsonContent = chooseJsonContent(resolvedOperation.requestBody?.content);
+    const resolvedOperation = entry.resolvedOperation;
+    const parameters = entry.resolvedParameters || [];
+    const bodyJsonContent = entry.bodyJsonContent;
     const xSpectest = collectXSpectestForKey(resolvedOperation, bodyJsonContent, parameters, key);
     const tags = [...new Set([...baseTags, ...(xSpectest.tags || [])])];
 
@@ -884,7 +908,117 @@ async function parseOpenApiDoc(filePath: string): Promise<any> {
   return doc;
 }
 
-function buildOperationEntries(doc: any): OperationEntry[] {
+function lowestDocumented4xx(responses: any): number | undefined {
+  return Object.keys(responses || {})
+    .filter((status) => /^4\d\d$/.test(status))
+    .map(Number)
+    .sort((a, b) => a - b)[0];
+}
+
+function hasAnyTag(tags: string[], candidates: string[]): boolean {
+  const normalized = candidates.map((t) => t.toLowerCase());
+  return tags.some((t) => normalized.includes(String(t).toLowerCase()));
+}
+
+function setExampleEntry(source: any, key: string, value: any, xSpectest?: any): void {
+  if (!source || typeof source !== 'object') return;
+  if (!source.examples || typeof source.examples !== 'object') source.examples = {};
+  source.examples[key] = xSpectest ? { value, 'x-spectest': xSpectest } : { value };
+}
+
+/**
+ * Seeds the operation's body + every parameter with the chosen seed's value under `key`, so a
+ * request built for a synthetic negative key is well-formed except for the one mutated field.
+ */
+function seedAllUnderKey(entry: OperationEntry, seedKey: string, key: string): void {
+  if (entry.bodyJsonContent) {
+    const seedBody = exampleValueForKey(entry.bodyJsonContent, seedKey);
+    if (seedBody !== undefined) setExampleEntry(entry.bodyJsonContent, key, seedBody);
+  }
+  for (const param of entry.resolvedParameters || []) {
+    const seedValue = exampleValueForKey(param, seedKey);
+    if (seedValue !== undefined) setExampleEntry(param, key, seedValue);
+  }
+}
+
+/**
+ * Mutates one field of an operation's request body/query/cookie parameters at a time, seeded from
+ * an existing hand-written example, and injects each surviving violation as a synthetic entry into
+ * the same `examples` map `collectExampleKeys` already reads — see design-docs/openapi-negative-and-fuzz-testing.md.
+ * Never throws: an operation this can't safely apply to is simply left without negative cases.
+ */
+function injectNegativeExamples(
+  entry: OperationEntry,
+  cfg: SpectestConfig,
+  ctx: { isLinkSource: boolean; isLinkTarget: boolean }
+): void {
+  const negativeCfg: OpenApiNegativeTestsConfig = cfg.openapiNegativeTests || {};
+  if (!negativeCfg.enabled || entry.resolutionError || !entry.resolvedOperation) return;
+
+  const resolvedOperation = entry.resolvedOperation;
+  const opXSpectest = normalizeXSpectest(resolvedOperation['x-spectest']);
+  if (opXSpectest.negative?.enabled === false) return;
+
+  const tags = [...new Set([...(resolvedOperation.tags || []), ...(opXSpectest.tags || [])].map(String))];
+  const excludeTags = negativeCfg.excludeTags || ['real-backend'];
+  if (hasAnyTag(tags, excludeTags)) return;
+
+  const hasDependsOn = Boolean(opXSpectest.dependsOn && opXSpectest.dependsOn.length > 0);
+  if (hasDependsOn || ctx.isLinkSource || ctx.isLinkTarget) return;
+
+  const existingKeys = collectExampleKeys(entry.bodyJsonContent, entry.resolvedParameters || [], resolvedOperation.responses);
+  if (existingKeys.length === 0) return;
+
+  const seedKey =
+    opXSpectest.negative?.seedExample && existingKeys.includes(opXSpectest.negative.seedExample)
+      ? opXSpectest.negative.seedExample
+      : existingKeys[0];
+
+  const statusOverride = opXSpectest.negative?.status;
+  const status = statusOverride ?? lowestDocumented4xx(resolvedOperation.responses);
+  if (status === undefined) return;
+
+  const maxCases = negativeCfg.maxCasesPerOperation ?? 20;
+  const fields = opXSpectest.negative?.fields;
+  const xSpectestStamp = { status, tags: ['negative'] };
+  let injectedCount = 0;
+
+  const bodySchema = entry.bodyJsonContent?.schema;
+  const seedBody = bodySchema ? exampleValueForKey(entry.bodyJsonContent, seedKey) : undefined;
+  if (bodySchema && seedBody && typeof seedBody === 'object' && !Array.isArray(seedBody)) {
+    for (const violation of mutateObjectSchema(bodySchema, seedBody, { fields })) {
+      if (injectedCount >= maxCases) break;
+      if (validateAgainstSchema(violation.value, bodySchema).success) continue;
+      seedAllUnderKey(entry, seedKey, violation.key);
+      setExampleEntry(entry.bodyJsonContent, violation.key, violation.value, xSpectestStamp);
+      injectedCount += 1;
+    }
+  }
+
+  for (const param of entry.resolvedParameters || []) {
+    if (injectedCount >= maxCases) break;
+    if (param.in !== 'query' && param.in !== 'cookie') continue;
+    if (fields && !fields.includes(param.name)) continue;
+    if (!param.schema) continue;
+    const seedValue = exampleValueForKey(param, seedKey);
+    if (seedValue === undefined) continue;
+    // "required" violations are excluded here: a missing value for a required parameter is
+    // indistinguishable, downstream, from an unresolved example — buildParameters treats it as
+    // `missing required parameter` and skips the test rather than sending a param-less request.
+    const violations = mutateValueForParam(param.schema, seedValue, false, param.name).filter(
+      (v) => v.violatedConstraint !== 'required'
+    );
+    for (const violation of violations) {
+      if (injectedCount >= maxCases) break;
+      if (validateAgainstSchema(violation.value, param.schema).success) continue;
+      seedAllUnderKey(entry, seedKey, violation.key);
+      setExampleEntry(param, violation.key, violation.value, xSpectestStamp);
+      injectedCount += 1;
+    }
+  }
+}
+
+function buildOperationEntries(doc: any, cfg: SpectestConfig = {}): OperationEntry[] {
   const operationEntries: OperationEntry[] = [];
   for (const [pathKey, pathItem] of Object.entries(doc.paths || {})) {
     if (!pathItem || typeof pathItem !== 'object') continue;
@@ -893,20 +1027,52 @@ function buildOperationEntries(doc: any): OperationEntry[] {
       if (!HTTP_METHODS.has(method) || !operation || typeof operation !== 'object') continue;
       const operationId = (operation as any).operationId || stableSlug(`${method}-${pathKey}`);
       let exampleKeys: string[] = [];
+      let resolvedOperation: any;
+      let resolvedParameters: any[] | undefined;
+      let bodyJsonContent: any;
+      let resolutionError: OpenApiSkip | undefined;
       try {
-        const resolvedOperation = resolveRefs(operation, doc);
-        const parameters = [
+        resolvedOperation = resolveRefs(operation, doc);
+        resolvedParameters = [
           ...rootParameters.map((param: any) => resolveRefs(param, doc)),
           ...(resolvedOperation.parameters || []).map((param: any) => resolveRefs(param, doc)),
         ];
-        const bodyJsonContent = chooseJsonContent(resolvedOperation.requestBody?.content);
-        exampleKeys = collectExampleKeys(bodyJsonContent, parameters, resolvedOperation.responses);
-      } catch {
+        bodyJsonContent = chooseJsonContent(resolvedOperation.requestBody?.content);
+        exampleKeys = collectExampleKeys(bodyJsonContent, resolvedParameters, resolvedOperation.responses);
+      } catch (error) {
         exampleKeys = [];
+        resolutionError = error instanceof OpenApiSkip ? error : new OpenApiSkip(String((error as any)?.message || error));
       }
-      operationEntries.push({ method, pathKey, operation, rootParameters, operationId, exampleKeys });
+      operationEntries.push({
+        method,
+        pathKey,
+        operation,
+        rootParameters,
+        operationId,
+        exampleKeys,
+        resolvedOperation,
+        resolvedParameters,
+        bodyJsonContent,
+        resolutionError,
+      });
     }
   }
+
+  const linkIndex = collectLinks(operationEntries);
+  const linkSourceOperationIds = new Set<string>();
+  for (const sources of linkIndex.values()) {
+    for (const source of sources) linkSourceOperationIds.add(source.from);
+  }
+
+  for (const entry of operationEntries) {
+    if (entry.resolutionError || !entry.resolvedOperation) continue;
+    injectNegativeExamples(entry, cfg, {
+      isLinkSource: linkSourceOperationIds.has(entry.operationId),
+      isLinkTarget: linkIndex.has(entry.operationId),
+    });
+    entry.exampleKeys = collectExampleKeys(entry.bodyJsonContent, entry.resolvedParameters || [], entry.resolvedOperation.responses);
+  }
+
   return operationEntries;
 }
 
@@ -922,14 +1088,18 @@ export async function loadOpenApiSuite(
   const doc = await parseOpenApiDoc(filePath);
   const name = doc.info?.title || path.relative(process.cwd(), filePath);
 
-  const operationEntries = buildOperationEntries(doc);
+  const operationEntries = buildOperationEntries(doc, cfg);
 
   const operationIdToGeneratedIds = new Map<string, string[]>();
   for (const entry of operationEntries) {
-    operationIdToGeneratedIds.set(entry.operationId, generatedIdsForEntry(entry));
+    // Synthetic negative keys are excluded here so a link source that gets split into multiple
+    // tests by negative injection still resolves to exactly one generated id for dependents'
+    // auto-derived dependsOn/beforeSend. describeOpenApiOperations (coverage/--list) stays inclusive.
+    const ids = generatedIdsForEntry(entry).filter((id) => !id.includes(`+${NEGATIVE_KEY_PREFIX}`));
+    operationIdToGeneratedIds.set(entry.operationId, ids);
   }
 
-  const linkIndex = collectLinks(doc, operationEntries);
+  const linkIndex = collectLinks(operationEntries);
 
   const tests: TestCase[] = [];
   for (const entry of operationEntries) {
@@ -964,9 +1134,12 @@ export interface OpenApiOperationDescriptor {
   generatedIds: string[];
 }
 
-export async function describeOpenApiOperations(filePath: string): Promise<OpenApiOperationDescriptor[]> {
+export async function describeOpenApiOperations(
+  filePath: string,
+  cfg: SpectestConfig = {}
+): Promise<OpenApiOperationDescriptor[]> {
   const doc = await parseOpenApiDoc(filePath);
-  return buildOperationEntries(doc).map((entry) => ({
+  return buildOperationEntries(doc, cfg).map((entry) => ({
     method: entry.method,
     pathKey: entry.pathKey,
     operationId: entry.operationId,

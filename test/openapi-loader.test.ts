@@ -162,6 +162,18 @@ test('single-example operation with no x-spectest behaves like v1 (unsuffixed op
   assert.equal(test1.skip, undefined);
 });
 
+// Regression (resolve-once refactor): an unresolvable $ref still produces a skipped test with the same
+// message text whether it's caught during buildOperationEntries' single resolution pass or (pre-refactor)
+// during buildTestForExample's second attempt.
+test('operation with an unresolvable $ref produces a skipped test with a matching skip reason', async () => {
+  const suite = await loadOpenApiSuite(fixture('unresolved-ref.yaml'), {});
+  assert.equal(suite.tests.length, 1);
+  const test1 = suite.tests[0];
+  assert.equal(test1.operationId, 'createWidgetBadRef');
+  assert.equal(test1.skip, true);
+  assert.match(test1.skipReason || '', /unresolved ref '#\/components\/schemas\/DoesNotExist'/);
+});
+
 // Integration: a hand-written suite's dependsOn resolves against a spec-generated operationId when combined in one dependency graph.
 test('hand-written tests can dependsOn a spec-generated operationId in a combined run', async () => {
   const generatedSuite = await loadOpenApiSuite(fixture('regression-v1.yaml'), {});
@@ -222,4 +234,91 @@ test("generated test's response.schema equals the spec's raw schema object, unwr
     },
   });
   assert.equal((createWidget.response?.schema as any).__spectestJsonSchema, undefined);
+});
+
+// --- Negative testing (Phases 1-2 of design-docs/openapi-negative-and-fuzz-testing.md) ---
+
+function negativeTests(tests: TestCase[], operationId: string): TestCase[] {
+  return tests.filter(
+    (t) => t.operationId?.startsWith(`${operationId}+__negative-`) && Array.isArray(t.tags) && t.tags.includes('negative')
+  );
+}
+
+test('negative tests are disabled by default: no fixture produces negative-tagged tests with no config', async () => {
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), {});
+  assert.equal(suite.tests.filter((t) => Array.isArray(t.tags) && t.tags.includes('negative')).length, 0);
+});
+
+test('enabling negative tests generates body and query-parameter violations, tagged and asserting the documented 4xx', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+
+  const created = negativeTests(suite.tests, 'createAccount');
+  assert.ok(created.length > 0, 'expected at least one negative test for createAccount');
+  for (const test of created) {
+    assert.equal(test.response?.status, 400);
+    assert.deepEqual(test.tags && [...test.tags].sort(), ['negative', 'openapi']);
+  }
+
+  const requiredEmail = created.find((t) => t.operationId === 'createAccount+__negative-email-required');
+  assert.ok(requiredEmail);
+  assert.equal('email' in (requiredEmail!.request?.body || {}), false);
+  assert.equal(requiredEmail!.request?.body.age, 30);
+
+  const referralTooShort = created.find((t) => t.operationId?.includes('referralcode-min-length'));
+  assert.ok(referralTooShort, 'expected a query-parameter minLength violation');
+  assert.deepEqual(referralTooShort!.request?.body, { email: 'a@b.com', age: 30, role: 'member' });
+});
+
+test('a mutated payload that still validates is discarded by the Ajv self-check', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+  const created = negativeTests(suite.tests, 'createAccount');
+  // `role` has no `required` entry and only an `enum` constraint; dropping it entirely is not a
+  // constraint violation (it's optional), so no `role-required` case should be generated.
+  assert.equal(created.some((t) => t.operationId?.includes('role-required')), false);
+});
+
+test('x-spectest.negative.seedExample selects the seed and generator-placeholder fields are skipped', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+  const created = negativeTests(suite.tests, 'createAccount');
+  const ageMinimum = created.find((t) => t.operationId === 'createAccount+__negative-age-minimum');
+  assert.ok(ageMinimum);
+  assert.equal(ageMinimum!.request?.body.email, 'a@b.com');
+});
+
+test('a real-side-effect tagged operation never gets negative tests, even with global enabled: true', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+  assert.equal(negativeTests(suite.tests, 'chargeAccount').length, 0);
+});
+
+test('a links-source operation and its link-target never get negative tests (stateful chain protection)', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+  assert.equal(negativeTests(suite.tests, 'createWidgetLinkSource').length, 0);
+  assert.equal(negativeTests(suite.tests, 'getWidgetLinkTarget').length, 0);
+});
+
+test('a links-source operation keeps resolving to exactly one generated id after negative injection, so the dependent still auto-derives dependsOn', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+  const getWidget = byOperationId(suite.tests, 'getWidgetLinkTarget');
+  assert.deepEqual(getWidget.dependsOn, ['createWidgetLinkSource+success']);
+  assert.equal(typeof getWidget.beforeSend, 'function');
+});
+
+test('maxCasesPerOperation caps the number of negative tests generated per operation', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true, maxCasesPerOperation: 2 } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+  assert.equal(negativeTests(suite.tests, 'createAccount').length, 2);
+});
+
+test('x-spectest.negative.enabled: false narrows off negative generation for one operation, others unaffected', async () => {
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), {
+    openapiNegativeTests: { enabled: true },
+  });
+  assert.equal(negativeTests(suite.tests, 'createGadgetNarrowed').length, 0);
+  assert.ok(negativeTests(suite.tests, 'createAccount').length > 0);
 });

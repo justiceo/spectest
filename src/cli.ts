@@ -2,10 +2,9 @@ import { existsSync, realpathSync } from 'fs';
 import { readFile, readdir, writeFile } from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import Ajv2020 from 'ajv/dist/2020.js';
-import addFormats from 'ajv-formats';
 
 import { HttpClient } from './http-client';
+import { normalizeOpenApiSchema, validateAgainstSchema } from './openapi-schema-validate';
 import { loadConfig } from './config';
 import Server from './server';
 import RateLimiter from './rate-limiter';
@@ -396,7 +395,7 @@ async function emitCoverageReport(cfg: any, tests: TestCase[], results: TestResu
     return;
   }
   try {
-    const rows = await buildCoverageReport(cfg.openapi, tests, results);
+    const rows = await buildCoverageReport(cfg.openapi, tests, results, cfg);
     const report = formatCoverageReport(rows);
     if (cfg.coverageReportFile) {
       await writeFile(cfg.coverageReportFile, `${report}\n`, 'utf8');
@@ -629,9 +628,6 @@ function isCancellationError(error: any, signal?: AbortSignal): boolean {
   );
 }
 
-const ajv2020 = new Ajv2020({ allErrors: true, strict: false });
-addFormats(ajv2020);
-
 export function validateWithSchema(data, schema) {
   if (typeof schema?.safeParse === 'function') {
     const result = schema.safeParse(data);
@@ -640,76 +636,10 @@ export function validateWithSchema(data, schema) {
       errors: result.success ? [] : result.error.issues.map((i) => i.message),
     };
   }
-  try {
-    const validate = ajv2020.compile(normalizeOpenApiSchema(schema));
-    const success = validate(data);
-    return {
-      success: Boolean(success),
-      errors: success ? [] : (validate.errors || []).map((error) => {
-        const path = error.instancePath || '/';
-        return `${path} ${error.message || 'failed validation'}`;
-      }),
-    };
-  } catch (error) {
-    return { success: false, errors: [error.message || 'invalid JSON schema'] };
-  }
+  return validateAgainstSchema(data, schema);
 }
 
-export function normalizeOpenApiSchema(schema) {
-  if (!schema || typeof schema !== 'object') {
-    return schema;
-  }
-  if (Array.isArray(schema)) {
-    return schema.map((item) => normalizeOpenApiSchema(item));
-  }
-
-  const result: any = {};
-  for (const [key, value] of Object.entries(schema)) {
-    if (
-      key === 'nullable' ||
-      key === 'example' ||
-      key === 'examples' ||
-      key === 'discriminator' ||
-      key === 'xml' ||
-      key === 'externalDocs' ||
-      key === 'deprecated' ||
-      key === 'readOnly' ||
-      key === 'writeOnly'
-    ) {
-      continue;
-    }
-    result[key] = normalizeOpenApiSchema(value);
-  }
-
-  if (schema.nullable === true) {
-    const type = result.type;
-    if (Array.isArray(type)) {
-      result.type = [...new Set([...type, 'null'])];
-    } else if (typeof type === 'string') {
-      result.type = [type, 'null'];
-    } else {
-      const nonNullSchema = { ...result };
-      result.anyOf = [...(Array.isArray(nonNullSchema.anyOf) ? nonNullSchema.anyOf : [nonNullSchema]), { type: 'null' }];
-      delete result.type;
-    }
-  }
-
-  if (schema.exclusiveMinimum === true && typeof schema.minimum === 'number') {
-    result.exclusiveMinimum = schema.minimum;
-    delete result.minimum;
-  } else if (schema.exclusiveMinimum === false) {
-    delete result.exclusiveMinimum;
-  }
-
-  if (schema.exclusiveMaximum === true && typeof schema.maximum === 'number') {
-    result.exclusiveMaximum = schema.maximum;
-    delete result.maximum;
-  } else if (schema.exclusiveMaximum === false) {
-    delete result.exclusiveMaximum;
-  }
-
-  return result;
-}
+export { normalizeOpenApiSchema };
 
 
 if (fileURLToPath(import.meta.url) === realpathSync(process.argv[1])) {

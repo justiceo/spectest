@@ -3,6 +3,7 @@ import { existsSync } from 'fs';
 import defaultConfig from './default.config.js';
 import type {
   MissingRecordingBehavior,
+  OpenApiNegativeTestsConfig,
   OpenApiRequestMutator,
   OutboundThrottleRule,
   RecordingMode,
@@ -44,6 +45,8 @@ export interface CliConfig {
   openapiAuth?: Record<string, OpenApiRequestMutator>;
   coverageReport?: boolean;
   coverageReportFile?: string;
+  negativeTests?: boolean;
+  openapiNegativeTests?: OpenApiNegativeTestsConfig;
 }
 
 function parseTestOutput(value: string | undefined): TestOutputMode {
@@ -164,6 +167,7 @@ const HELP_OPTIONS: [string, string][] = [
   ['--openapi-server <url|index>', 'Server URL or index to select from an OpenAPI document'],
   ['--coverage-report', 'Print a per-operation OpenAPI contract coverage report after the run'],
   ['--coverage-report-file <path>', 'Write the coverage report to a file instead of stdout'],
+  ['--negative-tests', 'Enable schema-derived negative test generation for OpenAPI operations (default: off)'],
   ['--dir <path>', 'Root directory of the project (default: current working directory)'],
   ['-h, --help', 'Show this help message and exit'],
 ];
@@ -189,6 +193,12 @@ Commands:
 `);
 }
 
+// Flags that never take a value, so a following positional argument (e.g. a suite file) is never
+// mistaken for one. Without this, `--happy ./test/foo.spectest.js` silently swallows the suite file
+// because parseArgs' token consumption runs before the switch below and can't tell a boolean flag
+// from a value-taking one.
+const NO_VALUE_FLAGS = new Set(['happy', 'randomize', 'verbose', 'coverage-report', 'negative-tests']);
+
 function parseArgs(argv: string[]): CliConfig {
   const args = argv.slice(2);
   const raw: CliConfig = {};
@@ -201,7 +211,7 @@ function parseArgs(argv: string[]): CliConfig {
     }
     if (arg.startsWith('--')) {
       let [key, value] = arg.slice(2).split('=');
-      if (typeof value === 'undefined') {
+      if (typeof value === 'undefined' && !NO_VALUE_FLAGS.has(key)) {
         const next = args[i + 1];
         if (next && !next.startsWith('--')) {
           value = next;
@@ -293,6 +303,9 @@ function parseArgs(argv: string[]): CliConfig {
         case 'coverage-report-file':
           raw.coverageReportFile = value;
           break;
+        case 'negative-tests':
+          raw.negativeTests = true;
+          break;
         case 'dir':
           raw.projectRoot = value;
           break;
@@ -338,9 +351,12 @@ export async function loadConfigFromCliOpts(cliOpts: CliConfig): Promise<CliConf
   }
 
   // then apply cli options over the configs.
-  const { projectRoot: _unused, ...restCliOpts } = cliOpts;
+  const { projectRoot: _unused, negativeTests, ...restCliOpts } = cliOpts;
   cfg = { ...cfg, ...restCliOpts };
   cfg.projectRoot = projectRoot;
+  if (negativeTests) {
+    cfg.openapiNegativeTests = { ...cfg.openapiNegativeTests, enabled: true };
+  }
   cfg.runningServer = (cfg.runningServer as any) || 'reuse';
   cfg.serverStartupTimeout = cfg.serverStartupTimeout || 30000;
   cfg.serverHealthCheckInterval = cfg.serverHealthCheckInterval || 250;

@@ -193,6 +193,38 @@ Set `x-spectest.security: none` to bypass security application entirely for an e
 
 Standard OpenAPI `responses.<status>.links` are honored for simple data-passing chains (e.g. register something, then fetch it using the `orderId` from the first response). When operation B has an unresolved parameter or request body and an earlier operation A declares a link targeting B by `operationId`, Spectest auto-generates `dependsOn: [A]` plus a `beforeSend` that reads the linked value from `state.completedCases[A]` via the link's runtime expression (`$response.body#/pointer` or `$response.header.<name>`). This only applies when A itself resolves to exactly one generated test; if A was split by multiple examples, use `x-spectest.dependsOn` + `beforeSend`/hooks instead.
 
+#### Schema-driven negative testing
+
+Beyond example-based negative cases (a `400` response paired with a hand-written invalid example), Spectest can *derive* negative cases directly from an operation's JSON Schema constraints — mutating one field of an existing example at a time (drop a required field, violate `minLength`/`maximum`/`enum`/`pattern`/`format`/`additionalProperties`, etc.) and asserting the documented `4xx` response. This is opt-in and off by default; every mutation starts from a real hand-written example, so Spectest still never invents data for a field that has no example.
+
+```bash
+npx spectest --openapi ./openapi.yaml --negative-tests
+```
+
+```js
+// spectest.config.js
+export default {
+  openapiNegativeTests: {
+    enabled: true,
+    maxCasesPerOperation: 20,       // cap per operation
+    excludeTags: ['real-backend'],  // operations with this tag/x-spectest.tags entry are never mutated
+  },
+};
+```
+
+Generated cases are tagged `negative` (alongside `openapi`), so `--tags`/`--filter` can include or exclude them like any other test. Per-operation, `x-spectest.negative` can narrow (but not force-enable when the global flag is off):
+
+```yaml
+x-spectest:
+  negative:
+    enabled: false        # opt this operation out entirely
+    fields: [email, age]  # restrict mutation to specific top-level body/query/cookie fields
+    status: 422            # pin the expected status instead of the lowest documented 4xx
+    seedExample: default   # which existing example key to mutate from (default: first key in spec order)
+```
+
+Negative generation is skipped (no crash, no cases) for an operation when: no hand-written example exists to seed from; the operation or its native `tags`/`x-spectest.tags` match `excludeTags`; the operation declares `x-spectest.dependsOn` or participates in a `links` chain (mutating a chain link risks breaking dependents that rely on its real response); or no documented `4xx` response exists to assert against. Only request body and query/cookie parameters are mutated — path and header parameters are excluded since an invalid value there is often rejected by the HTTP client or the router before it reaches your handler, making the expected status ambiguous.
+
 #### Contract coverage reporting
 
 ```bash
@@ -200,7 +232,7 @@ npx spectest --openapi ./openapi.yaml --coverage-report
 npx spectest --openapi ./openapi.yaml --coverage-report --coverage-report-file ./coverage.txt
 ```
 
-After the run, prints one line per spec operation: `generated & passed`, `generated & failed`, `generated & skipped (<reason>)`, `covered by hand-written test <operationId>` (when a hand-written suite's request matches that operation's method/path but no generated test ran for it), or `uncovered`.
+After the run, prints one line per spec operation: `generated & passed`, `generated & failed`, `generated & skipped (<reason>)`, `covered by hand-written test <operationId>` (when a hand-written suite's request matches that operation's method/path but no generated test ran for it), or `uncovered`. When negative testing generated cases for an operation, the line gets a `(+N negative)` suffix.
 
 #### Scaffolding editable test files
 
@@ -294,6 +326,7 @@ That’s where Spectest was born—out of necessity.
 | `openapiHooks` | Map of hook names to `{ beforeSend?, postTest? }`, resolved by `x-spectest.beforeSend`/`postTest` | `{}` |
 | `coverageReport` (`--coverage-report`) | Print an OpenAPI contract coverage report after the run | `false` |
 | `coverageReportFile` (`--coverage-report-file`) | Write the coverage report to a file instead of stdout | none |
+| `openapiNegativeTests` (`--negative-tests` toggles `.enabled`) | `{ enabled, maxCasesPerOperation, excludeTags }` for schema-derived negative test generation | `{ enabled: false, maxCasesPerOperation: 20, excludeTags: ['real-backend'] }` |
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` (`--dir`) | Root directory of the project | current working directory |
 

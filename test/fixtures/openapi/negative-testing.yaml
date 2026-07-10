@@ -1,0 +1,191 @@
+openapi: 3.0.3
+info:
+  title: Negative Testing Fixture
+  version: 1.0.0
+paths:
+  /accounts:
+    post:
+      operationId: createAccount
+      summary: Create an account
+      parameters:
+        - name: referralCode
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 4
+            maxLength: 10
+          example: "ABCD12"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["email", "age"]
+              additionalProperties: false
+              properties:
+                email:
+                  type: string
+                  minLength: 3
+                  maxLength: 100
+                  pattern: "^.+@.+$"
+                age:
+                  type: integer
+                  minimum: 18
+                  maximum: 120
+                role:
+                  type: string
+                  enum: ["admin", "member"]
+            examples:
+              success:
+                value: { email: "a@b.com", age: 30, role: "member" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { accountId: "acct-1", email: "a@b.com" }
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                required: ["error"]
+                properties:
+                  error: { type: string }
+  /accounts/{id}/charge:
+    post:
+      operationId: chargeAccount
+      summary: Charge an account (real backend side effect)
+      tags: ["real-backend"]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["amount"]
+              properties:
+                amount: { type: integer, minimum: 1 }
+            examples:
+              success:
+                value: { amount: 100 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { charged: true }
+        '402':
+          description: Payment required
+  /widgets:
+    post:
+      operationId: createWidgetLinkSource
+      summary: Create a widget (links source)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["name"]
+              properties:
+                name: { type: string, minLength: 1 }
+            examples:
+              success:
+                value: { name: "gizmo" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { widgetId: "widget-1", name: "gizmo" }
+          links:
+            GetWidget:
+              operationId: getWidgetLinkTarget
+              parameters:
+                id: "$response.body#/widgetId"
+  /widgets/{id}:
+    get:
+      operationId: getWidgetLinkTarget
+      summary: Fetch a widget (link target)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { widgetId: "widget-1", name: "gizmo" }
+  /gadgets:
+    post:
+      operationId: createGadgetNarrowed
+      summary: Create a gadget (negative testing explicitly narrowed off)
+      x-spectest:
+        negative:
+          enabled: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["name"]
+              properties:
+                name: { type: string, minLength: 1 }
+            examples:
+              success:
+                value: { name: "gadget" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { gadgetId: "gadget-1" }
+        '400':
+          description: Bad request
+  /gizmos:
+    post:
+      operationId: createGizmoSingularExample
+      summary: Create a gizmo (v1-style spec, single `example`, no `examples` map)
+      parameters:
+        - name: batchSize
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10
+          example: 3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ["name"]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 1, maxLength: 50 }
+            example: { name: "gizmo" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { gizmoId: "gizmo-1" }
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                required: ["error"]
+                properties:
+                  error: { type: string }

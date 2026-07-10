@@ -1,0 +1,18 @@
+openapi: 3.0.3
+info:
+  title: Unresolved Ref Fixture
+  version: 1.0.0
+paths:
+  /widgets:
+    post:
+      operationId: createWidgetBadRef
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DoesNotExist'
+            example: { name: "gizmo" }
+      responses:
+        '201':
+          description: Created

@@ -22,4 +22,5 @@ export default {
   recordingExcludeUrls: [],
   outboundThrottle: [],
   openapiAuth: {},
+  openapiNegativeTests: { enabled: false, maxCasesPerOperation: 20, excludeTags: ['real-backend'] },
 } satisfies SpectestConfig;

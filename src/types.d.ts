@@ -170,6 +170,14 @@ export interface SpectestConfig {
   openapiHooks?: Record<string, OpenApiHookEntry>;
   coverageReport?: boolean;
   coverageReportFile?: string;
+  openapiNegativeTests?: OpenApiNegativeTestsConfig;
+}
+
+export interface OpenApiNegativeTestsConfig {
+  enabled?: boolean;
+  maxCasesPerOperation?: number;
+  /** Operations tagged with any of these (via x-spectest.tags) never get negative tests, even when enabled. */
+  excludeTags?: string[];
 }
 
 export type TestResultStatus = 'passed' | 'failed' | 'skipped' | 'failed-precondition' | 'cancelled';

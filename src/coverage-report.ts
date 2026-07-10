@@ -1,5 +1,5 @@
 import { describeOpenApiOperations } from './plugins/openapi-loader.js';
-import type { TestCase, TestResult } from './types.js';
+import type { SpectestConfig, TestCase, TestResult } from './types.js';
 
 export type CoverageStatus =
   | { kind: 'generated-passed' }
@@ -13,11 +13,20 @@ export interface CoverageRow {
   path: string;
   operationId: string;
   status: CoverageStatus;
+  /** Count of generated-and-executed negative test cases for this operation (0 when none). */
+  negativeCaseCount: number;
+}
+
+function testTags(test: TestCase): string[] {
+  return Array.isArray(test.tags) ? test.tags : test.tags ? [test.tags] : [];
 }
 
 function hasOpenApiTag(test: TestCase): boolean {
-  const tags = Array.isArray(test.tags) ? test.tags : test.tags ? [test.tags] : [];
-  return tags.includes('openapi');
+  return testTags(test).includes('openapi');
+}
+
+function hasNegativeTag(test: TestCase): boolean {
+  return testTags(test).includes('negative');
 }
 
 function pathToRegex(pathTemplate: string): RegExp {
@@ -51,9 +60,10 @@ function findHandwrittenMatch(method: string, pathKey: string, handwrittenTests:
 export async function buildCoverageReport(
   openapiPath: string,
   allTests: TestCase[],
-  results: TestResult[]
+  results: TestResult[],
+  cfg: SpectestConfig = {}
 ): Promise<CoverageRow[]> {
-  const operations = await describeOpenApiOperations(openapiPath);
+  const operations = await describeOpenApiOperations(openapiPath, cfg);
   const generatedTests = allTests.filter(hasOpenApiTag);
   const handwrittenTests = allTests.filter((test) => !hasOpenApiTag(test));
 
@@ -85,7 +95,9 @@ export async function buildCoverageReport(
       }
     }
 
-    return { method: op.method.toUpperCase(), path: op.pathKey, operationId: op.operationId, status };
+    const negativeCaseCount = executed.filter(hasNegativeTag).length;
+
+    return { method: op.method.toUpperCase(), path: op.pathKey, operationId: op.operationId, status, negativeCaseCount };
   });
 }
 
@@ -110,8 +122,9 @@ export function formatCoverageReport(rows: CoverageRow[]): string {
   const methodWidth = Math.max(6, ...rows.map((r) => r.method.length)) + 1;
   const pathWidth = Math.max(4, ...rows.map((r) => r.path.length)) + 1;
   const opWidth = Math.max(11, ...rows.map((r) => r.operationId.length)) + 1;
-  const lines = rows.map(
-    (row) => `${row.method.padEnd(methodWidth)}${row.path.padEnd(pathWidth)}${row.operationId.padEnd(opWidth)}${describeStatus(row.status)}`
-  );
+  const lines = rows.map((row) => {
+    const negativeSuffix = row.negativeCaseCount > 0 ? ` (+${row.negativeCaseCount} negative)` : '';
+    return `${row.method.padEnd(methodWidth)}${row.path.padEnd(pathWidth)}${row.operationId.padEnd(opWidth)}${describeStatus(row.status)}${negativeSuffix}`;
+  });
   return lines.join('\n');
 }

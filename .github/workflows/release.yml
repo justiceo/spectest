@@ -1,0 +1,88 @@
+name: Release
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+
+      - name: Check for version bump
+        id: check
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then
+            echo "bumped=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "bumped=true" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog entry
+        if: steps.check.outputs.bumped == 'true'
+        id: entry
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="$PREV_TAG..HEAD"
+          fi
+
+          COMMITS=$(git log "$RANGE" --no-merges --pretty=format:"- %s" | grep -viE "^- Bump to v" || true)
+          if [ -z "$COMMITS" ]; then
+            COMMITS="- No notable changes."
+          fi
+
+          DATE=$(date +%Y-%m-%d)
+          SHORT_SHA=$(git rev-parse --short HEAD)
+
+          {
+            echo "## [${{ steps.check.outputs.version }}] — $DATE (commit \`$SHORT_SHA\`)"
+            echo "$COMMITS"
+          } > /tmp/changelog-entry.md
+
+          {
+            echo "body<<CHANGELOG_EOF"
+            cat /tmp/changelog-entry.md
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Prepend entry to CHANGELOG.md
+        if: steps.check.outputs.bumped == 'true'
+        run: |
+          { head -n 3 CHANGELOG.md; echo ""; cat /tmp/changelog-entry.md; echo ""; tail -n +4 CHANGELOG.md; } > /tmp/CHANGELOG.new
+          mv /tmp/CHANGELOG.new CHANGELOG.md
+
+      - name: Commit, tag, and push
+        if: steps.check.outputs.bumped == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "Update changelog for v${{ steps.check.outputs.version }} [skip ci]"
+          git tag "v${{ steps.check.outputs.version }}"
+          git push origin HEAD:main
+          git push origin "v${{ steps.check.outputs.version }}"
+
+      - name: Create GitHub release
+        if: steps.check.outputs.bumped == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.check.outputs.version }}
+          name: v${{ steps.check.outputs.version }}
+          body: ${{ steps.entry.outputs.body }}

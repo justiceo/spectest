@@ -37,24 +37,12 @@ jobs:
         id: entry
         run: |
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-          if [ -z "$PREV_TAG" ]; then
-            RANGE="HEAD"
-          else
-            RANGE="$PREV_TAG..HEAD"
-          fi
-
-          COMMITS=$(git log "$RANGE" --no-merges --pretty=format:"- %s" | grep -viE "^- Bump to v" || true)
-          if [ -z "$COMMITS" ]; then
-            COMMITS="- No notable changes."
-          fi
-
           DATE=$(date +%Y-%m-%d)
           SHORT_SHA=$(git rev-parse --short HEAD)
 
-          {
-            echo "## [${{ steps.check.outputs.version }}] — $DATE (commit \`$SHORT_SHA\`)"
-            echo "$COMMITS"
-          } > /tmp/changelog-entry.md
+          node scripts/generate-changelog-entry.mjs \
+            "${{ steps.check.outputs.version }}" "$PREV_TAG" "$DATE" "$SHORT_SHA" \
+            > /tmp/changelog-entry.md
 
           {
             echo "body<<CHANGELOG_EOF"
@@ -74,7 +62,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add CHANGELOG.md
-          git commit -m "Update changelog for v${{ steps.check.outputs.version }} [skip ci]"
+          git commit -m "chore(release): update changelog for v${{ steps.check.outputs.version }} [skip ci]"
           git tag "v${{ steps.check.outputs.version }}"
           git push origin HEAD:main
           git push origin "v${{ steps.check.outputs.version }}"

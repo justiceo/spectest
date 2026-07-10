@@ -17,6 +17,7 @@ import { mutateObjectSchema, mutateValueForParam } from './openapi-schema-mutato
 import { validateAgainstSchema } from '../openapi-schema-validate.js';
 
 const NEGATIVE_KEY_PREFIX = '__negative-';
+const DEFAULT_EXAMPLE_KEY = 'default';
 
 const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']);
 const DEFAULT_PARAM_STYLE: Record<string, { style: string; explode: boolean }> = {
@@ -942,6 +943,28 @@ function seedAllUnderKey(entry: OperationEntry, seedKey: string, key: string): v
 }
 
 /**
+ * v1-style specs document a single `example` per body/parameter (no `examples` map at all), which
+ * `collectExampleKeys` never sees since it only reads `source.examples`. Promotes any such singular
+ * example into a real `examples[key]` entry so the mutator has a seed and the resulting positive
+ * test keeps its usual (non-suffixed) generated id space intact for operations that never had one.
+ * Returns whether anything was promoted.
+ */
+function promoteSingularExampleToKey(entry: OperationEntry, key: string): boolean {
+  let promoted = false;
+  if (entry.bodyJsonContent && exampleValue(entry.bodyJsonContent) !== undefined) {
+    setExampleEntry(entry.bodyJsonContent, key, exampleValue(entry.bodyJsonContent));
+    promoted = true;
+  }
+  for (const param of entry.resolvedParameters || []) {
+    if (exampleValue(param) !== undefined) {
+      setExampleEntry(param, key, exampleValue(param));
+      promoted = true;
+    }
+  }
+  return promoted;
+}
+
+/**
  * Mutates one field of an operation's request body/query/cookie parameters at a time, seeded from
  * an existing hand-written example, and injects each surviving violation as a synthetic entry into
  * the same `examples` map `collectExampleKeys` already reads — see design-docs/openapi-negative-and-fuzz-testing.md.
@@ -966,8 +989,16 @@ function injectNegativeExamples(
   const hasDependsOn = Boolean(opXSpectest.dependsOn && opXSpectest.dependsOn.length > 0);
   if (hasDependsOn || ctx.isLinkSource || ctx.isLinkTarget) return;
 
-  const existingKeys = collectExampleKeys(entry.bodyJsonContent, entry.resolvedParameters || [], resolvedOperation.responses);
-  if (existingKeys.length === 0) return;
+  let existingKeys = collectExampleKeys(entry.bodyJsonContent, entry.resolvedParameters || [], resolvedOperation.responses);
+  if (existingKeys.length === 0) {
+    // v1-style specs document a single `example` (no `examples` map) - promote that singular
+    // example into a real `examples[DEFAULT_EXAMPLE_KEY]` entry so there is something to seed
+    // the mutator from. Without this, every operation using plain `example` (as opposed to a
+    // hand-authored `examples` map) silently gets zero negative cases, no matter the config.
+    if (!promoteSingularExampleToKey(entry, DEFAULT_EXAMPLE_KEY)) return;
+    existingKeys = collectExampleKeys(entry.bodyJsonContent, entry.resolvedParameters || [], resolvedOperation.responses);
+    if (existingKeys.length === 0) return;
+  }
 
   const seedKey =
     opXSpectest.negative?.seedExample && existingKeys.includes(opXSpectest.negative.seedExample)

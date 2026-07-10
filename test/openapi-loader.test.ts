@@ -322,3 +322,27 @@ test('x-spectest.negative.enabled: false narrows off negative generation for one
   assert.equal(negativeTests(suite.tests, 'createGadgetNarrowed').length, 0);
   assert.ok(negativeTests(suite.tests, 'createAccount').length > 0);
 });
+
+test('a v1-style operation with only a singular `example` (no `examples` map) still gets negative cases', async () => {
+  const cfg: SpectestConfig = { openapiNegativeTests: { enabled: true } };
+  const suite = await loadOpenApiSuite(fixture('negative-testing.yaml'), cfg);
+
+  // The positive/base test keeps a single non-synthetic generated id (`+default`), so it stays
+  // discoverable as exactly one id for link resolution/dependsOn purposes.
+  const positive = byOperationId(suite.tests, 'createGizmoSingularExample+default');
+  assert.deepEqual(positive.request?.body, { name: 'gizmo' });
+
+  const created = negativeTests(suite.tests, 'createGizmoSingularExample');
+  assert.ok(created.length > 0, 'expected at least one negative test for createGizmoSingularExample');
+  for (const test of created) {
+    assert.equal(test.response?.status, 400);
+  }
+
+  const nameRequired = created.find((t) => t.operationId === 'createGizmoSingularExample+__negative-name-required');
+  assert.ok(nameRequired, 'expected a required-field violation derived from the singular example');
+  assert.equal('name' in (nameRequired!.request?.body || {}), false);
+
+  const batchSizeTooLarge = created.find((t) => t.operationId?.includes('batchsize-maximum'));
+  assert.ok(batchSizeTooLarge, 'expected a query-parameter maximum violation seeded from the singular example');
+  assert.deepEqual(batchSizeTooLarge!.request?.body, { name: 'gizmo' });
+});

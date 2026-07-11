@@ -2,6 +2,22 @@
 
 All notable changes to this project are documented in this file, dates are the date of the version-bump commit.
 
+## [3.1.0] — 2026-07-11 (commit `351c6b6`)
+
+### Added
+- support requestBodyTarget links, $request/$generated/$state expressions, and captureFromLogs
+- group changelog entries by Conventional Commits type
+- add commit-msg hook enforcing Conventional Commits
+
+### Fixed
+- keep the trailing comma out of the TODO comment when serializing tests
+
+### Other
+- bump to v3.1.0
+- add coverage for edge cases in server/param/response resolution
+- Add release workflow to automate changelog updates and GitHub releases
+
+
 ## 3.0.0
 
 ### Breaking changes

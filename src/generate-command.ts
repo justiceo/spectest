@@ -69,13 +69,18 @@ function serializeTest(test: TestCase): string {
     // like signup.
     if (PLACEHOLDER_TOKEN.test(json)) {
       const withMarker = JSON.stringify({ ...serializable, beforeSend: PLACEHOLDER_MARKER }, null, 2);
-      return withMarker.replace(`"beforeSend": "${PLACEHOLDER_MARKER}"`, 'beforeSend: __spectestRegenerateExampleData');
+      return withMarker.replace(`"beforeSend": "${PLACEHOLDER_MARKER}"`, 'beforeSend: __spectestRegenerateExampleData') + ',';
     }
-    return json;
+    return json + ',';
   }
   const json = JSON.stringify(serializable, null, 2);
   const hookNames = [beforeSend && 'beforeSend', postTest && 'postTest'].filter(Boolean).join('/');
-  return `${json}\n// TODO: this generated test had a ${hookNames} attached (from x-spectest or a links chain).\n// Re-attach the matching function from your spectest.config.js openapiHooks/openapiAuth here.`;
+  // The trailing comma must sit right after the JSON blob, not after the
+  // comment below it - anything appended past `//` on the comment's last
+  // line is swallowed into the comment and stops being a real separator,
+  // which used to produce `[ {...} {...} ]` (a syntax error) once this
+  // array was joined with '\n' instead of ',\n'.
+  return `${json},\n// TODO: this generated test had a ${hookNames} attached (from x-spectest or a links chain).\n// Re-attach the matching function from your spectest.config.js openapiHooks/openapiAuth here.`;
 }
 
 export async function generateOpenApiTests(openapiPath: string, outputDir: string, cfg: any): Promise<string[]> {
@@ -92,7 +97,7 @@ export async function generateOpenApiTests(openapiPath: string, outputDir: strin
 ${needsRegenerateHelper ? REGENERATE_HELPER : ''}export default {
   name: ${JSON.stringify(suite.name)},
   tests: [
-${serializedTests.map((json) => indent(json, 4)).join(',\n')}
+${serializedTests.map((json) => indent(json, 4)).join('\n')}
   ],
 };
 `;

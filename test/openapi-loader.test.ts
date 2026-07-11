@@ -1,8 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'path';
+import os from 'os';
+import { writeFile, mkdtemp } from 'fs/promises';
 import { fileURLToPath } from 'url';
-import { loadOpenApiSuite } from '../src/plugins/openapi-loader.js';
+import { loadOpenApiSuite, describeOpenApiOperations, openApiLoaderPlugin } from '../src/plugins/openapi-loader.js';
 import { buildCoverageReport } from '../src/coverage-report.js';
 import type { SpectestConfig, TestCase, TestResult } from '../src/types.js';
 
@@ -444,4 +446,305 @@ test('a v1-style operation with only a singular `example` (no `examples` map) st
   const batchSizeTooLarge = created.find((t) => t.operationId?.includes('batchsize-maximum'));
   assert.ok(batchSizeTooLarge, 'expected a query-parameter maximum violation seeded from the singular example');
   assert.deepEqual(batchSizeTooLarge!.request?.body, { name: 'gizmo' });
+});
+
+// --- Document-level validation, server resolution, parameter/body/response edge cases ---
+
+async function writeTempDoc(content: string): Promise<string> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'spectest-openapi-'));
+  const file = path.join(dir, 'doc.json');
+  await writeFile(file, content, 'utf8');
+  return file;
+}
+
+test('OpenAPI document validation rejects non-object docs, Swagger 2.0, unsupported versions, and missing paths', async () => {
+  await assert.rejects(
+    loadOpenApiSuite(await writeTempDoc('null'), {}),
+    /OpenAPI document must be an object/
+  );
+  await assert.rejects(
+    loadOpenApiSuite(await writeTempDoc(JSON.stringify({ swagger: '2.0', paths: {} })), {}),
+    /Swagger\/OpenAPI 2.0 is not supported/
+  );
+  await assert.rejects(
+    loadOpenApiSuite(await writeTempDoc(JSON.stringify({ openapi: '4.0.0', paths: {} })), {}),
+    /must declare version 3\.0\.x or 3\.1\.x/
+  );
+  await assert.rejects(
+    loadOpenApiSuite(await writeTempDoc(JSON.stringify({ openapi: '3.0.3' })), {}),
+    /must include a paths object/
+  );
+});
+
+test('an operation with no operationId falls back to a stable slug derived from method + path', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const slugged = suite.tests.find((t) => t.endpoint === '/widgets' && t.request?.method === 'GET');
+  assert.ok(slugged);
+  assert.equal(slugged!.operationId, 'get-widgets');
+});
+
+test('multiple doc-level servers with no cfg.openapiServer default to no prefix', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const ping = byOperationId(suite.tests, 'pingMultiServer');
+  assert.equal(ping.endpoint, '/ping');
+});
+
+test('cfg.openapiServer selects a doc-level server by numeric index', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), { openapiServer: 0 });
+  const ping = byOperationId(suite.tests, 'pingMultiServer');
+  assert.equal(ping.endpoint, '/v1/ping');
+});
+
+test('cfg.openapiServer selects a doc-level server by url string', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), { openapiServer: '/v2' });
+  const ping = byOperationId(suite.tests, 'pingMultiServer');
+  assert.equal(ping.endpoint, '/v2/ping');
+});
+
+test('cfg.openapiServer with no matching url skips the test', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), { openapiServer: '/bogus' });
+  const ping = byOperationId(suite.tests, 'pingMultiServer');
+  assert.equal(ping.skip, true);
+  assert.match(ping.skipReason || '', /configured OpenAPI server '\/bogus' was not found/);
+});
+
+test('a single operation-level server auto-selects without needing cfg.openapiServer', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const ping = byOperationId(suite.tests, 'pingSingleOpServer');
+  assert.equal(ping.endpoint, '/solo/ping-single');
+});
+
+test('multiple operation-level servers without cfg.openapiServer skips the test', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const ping = byOperationId(suite.tests, 'pingMultiOpServer');
+  assert.equal(ping.skip, true);
+  assert.match(ping.skipReason || '', /unsupported operation-level server override/);
+});
+
+test('an unsupported parameter serialization style skips the test', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'unsupportedStyleParam');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /unsupported parameter serialization for query parameter 'tags'/);
+});
+
+test('a cookie parameter is merged into the Cookie header', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'cookieParamOp');
+  assert.equal(op.request?.headers?.Cookie, 'sid=abc123');
+});
+
+test('a required request body with only a non-JSON media type skips the test', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'unsupportedBodyMedia');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /unsupported required request body media type/);
+});
+
+test('x-spectest.status referencing an undocumented response skips the test', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'forcedStatusMismatch');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /x-spectest\.status 404 has no matching response definition/);
+});
+
+test('a 204 response sets only the status, no schema/json', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'deleteNoContent');
+  assert.equal(op.skip, undefined);
+  assert.equal(op.response?.status, 204);
+  assert.equal(op.response?.schema, undefined);
+  assert.equal(op.response?.json, undefined);
+});
+
+test('a non-JSON response with an explicit status sets only the status', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'nonJsonResponse');
+  assert.equal(op.skip, undefined);
+  assert.equal(op.response?.status, 202);
+  assert.equal(op.response?.schema, undefined);
+  assert.equal(op.response?.json, undefined);
+});
+
+test('an operation with no usable response status skips the test', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'noUsableStatus');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /no usable response status/);
+});
+
+test('a default response with no content and no status skips as no usable response assertion', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'defaultResponseNoContent');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /no usable response assertion/);
+});
+
+test('a default JSON response with no schema/example/status skips as no usable response assertion', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'jsonNoSchemaNoStatus');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /no usable response assertion/);
+});
+
+test('x-spectest.generate referencing an unknown generator skips the test', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'unknownGenerator');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /unknown x-spectest\.generate generator 'notAGenerator'/);
+});
+
+test('an openapiAuth hook mutation applies query/cookie/header/credentials to the request', async () => {
+  const cfg: SpectestConfig = {
+    openapiAuth: {
+      apiKeyQuery: async () => ({
+        query: { api_key: 'k1' },
+        cookies: { sid: 's1' },
+        headers: { 'X-Extra': '1' },
+        credentials: 'include',
+      }),
+    },
+  };
+  const suite = await loadOpenApiSuite(fixture('auth-mutation.yaml'), cfg);
+  const op = byOperationId(suite.tests, 'secureGet');
+  assert.match(op.endpoint, /api_key=k1/);
+  assert.equal(op.request?.headers?.Cookie, 'sid=s1');
+  assert.equal(op.request?.headers?.['X-Extra'], '1');
+  assert.equal((op.request as any).credentials, 'include');
+});
+
+test('a function-mode auth hook is ignored when a named variant is requested, skipping with a variant-specific reason', async () => {
+  const cfg: SpectestConfig = {
+    openapiAuth: {
+      apiKeyQuery: async () => ({ query: { api_key: 'k1' } }),
+    },
+  };
+  const suite = await loadOpenApiSuite(fixture('auth-mutation.yaml'), cfg);
+  const op = byOperationId(suite.tests, 'secureVariantGet');
+  assert.equal(op.skip, true);
+  assert.match(op.skipReason || '', /missing auth hook variant 'premium' for required scheme/);
+});
+
+test('query/cookie/header link kinds resolve via $response.header and $request.header runtime expressions', async () => {
+  const suite = await loadOpenApiSuite(fixture('links-extra.yaml'), {});
+  const getReceipt = byOperationId(suite.tests, 'getReceipt');
+  assert.deepEqual(getReceipt.dependsOn, ['createOrder3']);
+
+  const config = { url: '/receipts', headers: {} as Record<string, string> };
+  const state = {
+    completedCases: {
+      createOrder3: {
+        request: { headers: { 'X-Session-Id': 'sess-9' } },
+        response: { status: 201, headers: { 'X-Trace-Id': 'trace-7' }, data: { region: 'us' } },
+      },
+    },
+  };
+  const updated = await getReceipt.beforeSend!(config, state);
+  assert.match(updated.url, /traceId=trace-7/);
+  assert.equal(updated.headers.Cookie, 'sessionId=sess-9');
+  assert.equal(updated.headers.region, 'us');
+});
+
+test('openApiLoaderPlugin registers an onLoad handler that returns the parsed suite', async () => {
+  let registered: { filter: RegExp; source?: string } | undefined;
+  let handler: ((args: { path: string }) => Promise<any>) | undefined;
+  const plugin = openApiLoaderPlugin({});
+  plugin.setup({
+    onLoad(matcher: any, cb: any) {
+      registered = matcher;
+      handler = cb;
+    },
+  } as any);
+  assert.equal(registered?.source, 'openapi');
+  assert.ok(registered?.filter.test('spec.yaml'));
+  const result = await handler!({ path: fixture('regression-v1.yaml') });
+  assert.equal(result.suites.length, 1);
+  assert.equal(result.suites[0].tests[0].operationId, 'getTodo');
+});
+
+test('an optional query parameter with no example is simply omitted', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'optionalQueryNoExample');
+  assert.equal(op.skip, undefined);
+  assert.equal(op.endpoint, '/optional-query-no-example');
+});
+
+test('a header parameter with an example value is sent as a request header', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'headerParamWithExample');
+  assert.equal(op.request?.headers?.['X-Trace'], 'trace-abc');
+});
+
+test('an array-valued query parameter example is JSON-stringified', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'arrayQueryParam');
+  assert.match(op.endpoint, /ids=%5B1%2C2%2C3%5D|ids=\[1,2,3\]/);
+});
+
+test('a whole-body link synthesizes the entire request body when no example exists', async () => {
+  const suite = await loadOpenApiSuite(fixture('edge-cases.yaml'), {});
+  const op = byOperationId(suite.tests, 'provisionBilling');
+  assert.deepEqual(op.dependsOn, ['createAccount2']);
+  assert.equal(op.request?.body, undefined);
+  assert.equal(typeof op.beforeSend, 'function');
+
+  const config = { url: '/billing', headers: {} };
+  const state = {
+    completedCases: {
+      createAccount2: { response: { status: 201, headers: {}, data: { accountId: 'acc-1' } } },
+    },
+  };
+  const updated = await op.beforeSend!(config, state);
+  assert.equal(updated.data, 'acc-1');
+});
+
+test('resolveRefs rejects external refs and circular refs with a skip reason', async () => {
+  const doc = await writeTempDoc(
+    JSON.stringify({
+      openapi: '3.0.3',
+      info: { title: 'Ref Edge Cases', version: '1.0.0' },
+      paths: {
+        '/external': {
+          post: {
+            operationId: 'externalRefOp',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: { $ref: 'other.yaml#/Foo' }, example: {} } },
+            },
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+        '/circular': {
+          post: {
+            operationId: 'circularRefOp',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/Node' }, example: {} } },
+            },
+            responses: { '200': { description: 'OK' } },
+          },
+        },
+      },
+      components: { schemas: { Node: { $ref: '#/components/schemas/Node' } } },
+    })
+  );
+  const suite = await loadOpenApiSuite(doc, {});
+  const external = byOperationId(suite.tests, 'externalRefOp');
+  assert.equal(external.skip, true);
+  assert.match(external.skipReason || '', /external or unsupported ref 'other\.yaml#\/Foo'/);
+
+  const circular = byOperationId(suite.tests, 'circularRefOp');
+  assert.equal(circular.skip, true);
+  assert.match(circular.skipReason || '', /circular ref '#\/components\/schemas\/Node'/);
+});
+
+test('describeOpenApiOperations lists method/path/operationId/generatedIds without building full test cases', async () => {
+  const descriptors = await describeOpenApiOperations(fixture('validation-matrix.yaml'), {});
+  assert.equal(descriptors.length, 1);
+  assert.equal(descriptors[0].method, 'post');
+  assert.equal(descriptors[0].operationId, 'register');
+  assert.deepEqual(
+    [...descriptors[0].generatedIds].sort(),
+    ['register+missingDomainName', 'register+missingEmail', 'register+success']
+  );
 });

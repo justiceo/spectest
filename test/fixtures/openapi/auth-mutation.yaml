@@ -1,0 +1,35 @@
+openapi: 3.0.3
+info:
+  title: Auth Mutation Fixture
+  version: 1.0.0
+components:
+  securitySchemes:
+    apiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+paths:
+  /secure:
+    get:
+      operationId: secureGet
+      security:
+        - apiKeyQuery: []
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /secure-variant:
+    get:
+      operationId: secureVariantGet
+      security:
+        - apiKeyQuery: []
+      x-spectest:
+        security: premium
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }

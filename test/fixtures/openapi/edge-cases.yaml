@@ -1,0 +1,237 @@
+openapi: 3.0.3
+info:
+  title: Edge Cases Fixture
+  version: 1.0.0
+servers:
+  - url: /v1
+  - url: /v2
+paths:
+  /ping:
+    get:
+      operationId: pingMultiServer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /ping-single:
+    get:
+      operationId: pingSingleOpServer
+      servers:
+        - url: /solo
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /ping-multi-op:
+    get:
+      operationId: pingMultiOpServer
+      servers:
+        - url: /opv1
+        - url: /opv2
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /widgets:
+    get:
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /unsupported-style:
+    get:
+      operationId: unsupportedStyleParam
+      parameters:
+        - name: tags
+          in: query
+          style: spaceDelimited
+          explode: false
+          example: "a b"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /cookie-param:
+    get:
+      operationId: cookieParamOp
+      parameters:
+        - name: sid
+          in: cookie
+          example: "abc123"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /unsupported-body-media:
+    post:
+      operationId: unsupportedBodyMedia
+      requestBody:
+        required: true
+        content:
+          application/xml:
+            example: "<a/>"
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /forced-status-mismatch:
+    get:
+      operationId: forcedStatusMismatch
+      x-spectest:
+        status: 404
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /no-content:
+    delete:
+      operationId: deleteNoContent
+      responses:
+        '204':
+          description: No Content
+  /non-json-response:
+    get:
+      operationId: nonJsonResponse
+      responses:
+        '202':
+          description: Accepted
+          content:
+            text/plain:
+              example: "queued"
+  /no-usable-status:
+    get:
+      operationId: noUsableStatus
+      responses: {}
+  /default-response-no-content:
+    get:
+      operationId: defaultResponseNoContent
+      responses:
+        default:
+          description: fallback
+  /json-no-schema-no-status:
+    get:
+      operationId: jsonNoSchemaNoStatus
+      responses:
+        default:
+          description: fallback
+          content:
+            application/json: {}
+  /optional-query-no-example:
+    get:
+      operationId: optionalQueryNoExample
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /header-param-with-example:
+    get:
+      operationId: headerParamWithExample
+      parameters:
+        - name: X-Trace
+          in: header
+          required: true
+          example: "trace-abc"
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /array-query-param:
+    get:
+      operationId: arrayQueryParam
+      parameters:
+        - name: ids
+          in: query
+          required: true
+          example: [1, 2, 3]
+          schema:
+            type: array
+            items:
+              type: integer
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /accounts:
+    post:
+      operationId: createAccount2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { name: "acme" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { accountId: "acc-1" }
+          links:
+            ProvisionBilling:
+              operationId: provisionBilling
+              requestBody: "$response.body#/accountId"
+  /billing:
+    post:
+      operationId: provisionBilling
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }
+  /unknown-generator:
+    post:
+      operationId: unknownGenerator
+      x-spectest:
+        generate:
+          id: notAGenerator
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { id: "placeholder" }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }

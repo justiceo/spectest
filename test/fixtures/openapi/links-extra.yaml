@@ -1,0 +1,51 @@
+openapi: 3.0.3
+info:
+  title: Links Extra Fixture
+  version: 1.0.0
+paths:
+  /orders3:
+    post:
+      operationId: createOrder3
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { product: "x" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { orderId: "o-1" }
+          links:
+            FetchReceipt:
+              operationId: getReceipt
+              parameters:
+                traceId: "$response.header.X-Trace-Id"
+                sessionId: "$request.header.X-Session-Id"
+                region: "$response.body#/region"
+  /receipts:
+    get:
+      operationId: getReceipt
+      parameters:
+        - name: traceId
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: sessionId
+          in: cookie
+          required: true
+          schema:
+            type: string
+        - name: region
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { ok: true }

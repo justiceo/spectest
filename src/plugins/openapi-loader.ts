@@ -53,6 +53,9 @@ type NormalizedXSpectest = {
   security?: string;
   generate?: Record<string, string>;
   negative?: NegativeTestOverride;
+  // capture a value out of the SUT's logs after the response, into run
+  // state, so a dependent can reference it via `$state.<key>`.
+  captureFromLogs?: { pattern: string; into: string; group?: number };
 };
 
 type PendingLink = {
@@ -60,11 +63,19 @@ type PendingLink = {
   name?: string;
   source: string;
   expression: string;
+  // for `kind: 'body'`, a JSON pointer into the request body to set instead
+  // of replacing the whole body (from `x-spectest-requestBodyTarget`).
+  target?: string;
 };
 
-type LinkSource = { from: string; parameters: Record<string, string>; requestBody?: string };
+type LinkSource = {
+  from: string;
+  parameters: Record<string, string>;
+  requestBody?: string;
+  requestBodyTarget?: string;
+};
 type ParamLinkCandidate = { name: string; source: string; expression: string };
-type BodyLinkCandidate = { source: string; expression: string };
+type BodyLinkCandidate = { source: string; expression: string; target?: string };
 
 type OperationEntry = {
   method: string;
@@ -215,6 +226,18 @@ function normalizeXSpectest(raw: any): NormalizedXSpectest {
   if (typeof raw.postTest === 'string') result.postTest = raw.postTest;
   if (typeof raw.security === 'string') result.security = raw.security;
   if (raw.generate && typeof raw.generate === 'object') result.generate = raw.generate;
+  if (
+    raw.captureFromLogs &&
+    typeof raw.captureFromLogs === 'object' &&
+    typeof raw.captureFromLogs.pattern === 'string' &&
+    typeof raw.captureFromLogs.into === 'string'
+  ) {
+    result.captureFromLogs = {
+      pattern: raw.captureFromLogs.pattern,
+      into: raw.captureFromLogs.into,
+      ...(typeof raw.captureFromLogs.group === 'number' ? { group: raw.captureFromLogs.group } : {}),
+    };
+  }
   if (raw.negative && typeof raw.negative === 'object') {
     const negative: NegativeTestOverride = {};
     if (typeof raw.negative.enabled === 'boolean') negative.enabled = raw.negative.enabled;
@@ -290,18 +313,25 @@ function setByPath(target: any, parts: string[], value: any): void {
   current[parts[parts.length - 1]] = value;
 }
 
-function applyGeneratorOverrides(body: any, generate: Record<string, string> | undefined): any {
-  if (!generate || Object.keys(generate).length === 0) return body;
-  if (body === undefined || body === null || typeof body !== 'object') return body;
+function applyGeneratorOverrides(
+  body: any,
+  generate: Record<string, string> | undefined
+): { body: any; generated: Record<string, string> } {
+  if (!generate || Object.keys(generate).length === 0) return { body, generated: {} };
+  if (body === undefined || body === null || typeof body !== 'object') return { body, generated: {} };
   const result = JSON.parse(JSON.stringify(body));
+  const generated: Record<string, string> = {};
   for (const [pathKey, generatorName] of Object.entries(generate)) {
     const generator = GENERATORS[generatorName];
     if (!generator) {
       throw new OpenApiSkip(`unknown x-spectest.generate generator '${generatorName}'`);
     }
-    setByPath(result, pathKey.split('.'), generator());
+    const value = generator();
+    setByPath(result, pathKey.split('.'), value);
+    // Record under the generate-map key so `$generated.<key>` can reference it.
+    generated[pathKey] = value;
   }
-  return result;
+  return { body: result, generated };
 }
 
 function valueToString(value: any): string {
@@ -386,28 +416,38 @@ function chooseJsonContent(content: any): any {
 function buildRequestBody(
   operation: any,
   key: string | undefined,
-  bodyCandidate: BodyLinkCandidate | undefined
-): { value: any; pendingLink?: PendingLink } {
+  bodyCandidates: BodyLinkCandidate[]
+): { value: any; pendingLinks: PendingLink[] } {
+  const pendingLinks: PendingLink[] = [];
+  const targeted = bodyCandidates.filter((c) => c.target);
+  const wholeBody = bodyCandidates.find((c) => !c.target);
   const requestBody = operation.requestBody;
-  if (!requestBody) return { value: undefined };
+  if (!requestBody) return { value: undefined, pendingLinks };
   const jsonContent = chooseJsonContent(requestBody.content);
   if (!jsonContent) {
     if (requestBody.required) {
       throw new OpenApiSkip('unsupported required request body media type');
     }
-    return { value: undefined };
+    return { value: undefined, pendingLinks };
   }
   const value = exampleValueForKey(jsonContent, key);
   if (value === undefined) {
     if (requestBody.required) {
-      if (bodyCandidate) {
-        return { value: undefined, pendingLink: { kind: 'body', source: bodyCandidate.source, expression: bodyCandidate.expression } };
+      // A whole-body link can synthesize the entire body; targeted field links
+      // need a base example to fill into, so a missing example still skips.
+      if (wholeBody) {
+        pendingLinks.push({ kind: 'body', source: wholeBody.source, expression: wholeBody.expression });
+        return { value: undefined, pendingLinks };
       }
       throw new OpenApiSkip('missing required request body example/default');
     }
-    return { value: undefined };
+    return { value: undefined, pendingLinks };
   }
-  return { value };
+  // Example body present: fill each targeted field from its link at send time.
+  for (const c of targeted) {
+    pendingLinks.push({ kind: 'body', source: c.source, expression: c.expression, target: c.target });
+  }
+  return { value, pendingLinks };
 }
 
 function responseStatusCode(status: string): number | undefined {
@@ -629,13 +669,36 @@ function resolveHooks(
   return result;
 }
 
-function parseRuntimeExpression(
-  expression: string
-): { kind: 'body'; pointer: string } | { kind: 'header'; name: string } | undefined {
+type ParsedRuntimeExpression =
+  | { kind: 'body'; pointer: string }
+  | { kind: 'header'; name: string }
+  | { kind: 'requestBody'; pointer: string }
+  | { kind: 'requestHeader'; name: string }
+  | { kind: 'generated'; name: string }
+  | { kind: 'state'; name: string };
+
+function parseRuntimeExpression(expression: string): ParsedRuntimeExpression | undefined {
   const bodyMatch = /^\$response\.body#(\/.*)$/.exec(expression);
   if (bodyMatch) return { kind: 'body', pointer: bodyMatch[1] };
   const headerMatch = /^\$response\.header\.(.+)$/.exec(expression);
   if (headerMatch) return { kind: 'header', name: headerMatch[1] };
+  // source a value the linked operation *sent*, not only what it returned.
+  // `$request.body#/...` and `$request.header.<name>` are part of the OpenAPI
+  // runtime-expression grammar. `$request.path.<name>` is intentionally
+  // unsupported: the source operation's URL is already substituted, so the
+  // original path value can't be recovered losslessly.
+  const requestBodyMatch = /^\$request\.body#(\/.*)$/.exec(expression);
+  if (requestBodyMatch) return { kind: 'requestBody', pointer: requestBodyMatch[1] };
+  const requestHeaderMatch = /^\$request\.header\.(.+)$/.exec(expression);
+  if (requestHeaderMatch) return { kind: 'requestHeader', name: requestHeaderMatch[1] };
+  // reference a value produced by `x-spectest.generate` on the source op
+  // that did not surface in its request body (values that did are reachable via
+  // `$request.body#/...`).
+  const generatedMatch = /^\$generated\.(.+)$/.exec(expression);
+  if (generatedMatch) return { kind: 'generated', name: generatedMatch[1] };
+  // reference a value captured into run state (e.g. by captureFromLogs).
+  const stateMatch = /^\$state\.(.+)$/.exec(expression);
+  if (stateMatch) return { kind: 'state', name: stateMatch[1] };
   return undefined;
 }
 
@@ -650,6 +713,19 @@ function getByJsonPointer(data: any, pointer: string): any {
   return current;
 }
 
+function setByJsonPointer(target: any, pointer: string, value: any): void {
+  const parts = pointer.replace(/^\//, '').split('/').map(decodePointerPart);
+  let current = target;
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    const part = parts[i];
+    if (typeof current[part] !== 'object' || current[part] === null) {
+      current[part] = {};
+    }
+    current = current[part];
+  }
+  current[parts[parts.length - 1]] = value;
+}
+
 function getHeaderValue(headers: any, name: string): any {
   if (!headers) return undefined;
   if (typeof headers.get === 'function') {
@@ -659,26 +735,48 @@ function getHeaderValue(headers: any, name: string): any {
   return entry ? entry[1] : undefined;
 }
 
-function resolveRuntimeExpression(expression: string, completedResult: any): any {
+function resolveRuntimeExpression(expression: string, completedResult: any, state?: any): any {
   const parsed = parseRuntimeExpression(expression);
   if (!parsed) {
     throw new Error(`unsupported link runtime expression '${expression}'`);
   }
-  if (parsed.kind === 'body') {
-    return getByJsonPointer(completedResult?.response?.data, parsed.pointer);
+  switch (parsed.kind) {
+    case 'body':
+      return getByJsonPointer(completedResult?.response?.data, parsed.pointer);
+    case 'header':
+      return getHeaderValue(completedResult?.response?.headers, parsed.name);
+    // The completed result stores the outbound axios `config` as `.request`
+    // (see cli.ts): `.request.data` is the sent body, `.request.headers` the
+    // sent headers.
+    case 'requestBody':
+      return getByJsonPointer(completedResult?.request?.data, parsed.pointer);
+    case 'requestHeader':
+      return getHeaderValue(completedResult?.request?.headers, parsed.name);
+    case 'generated':
+      return completedResult?.generatedValues?.[parsed.name];
+    // run-level state, not tied to a source's completed result.
+    case 'state':
+      return state?.[parsed.name];
   }
-  return getHeaderValue(completedResult?.response?.headers, parsed.name);
 }
 
 function applyPendingLinks(config: any, state: any, pendingLinks: PendingLink[]): any {
   const updated = { ...config, headers: { ...config.headers } };
   let url = String(updated.url);
   for (const link of pendingLinks) {
-    const completed = state?.completedCases?.[link.source];
-    if (!completed) {
-      throw new Error(`link source '${link.source}' has no completed result in state`);
+    // `$state.<key>` reads run-level state populated by a source op's postTest
+    // (e.g. captureFromLogs); it doesn't need the source's completed result.
+    const isStateExpr = /^\$state\./.test(link.expression);
+    let value: any;
+    if (isStateExpr) {
+      value = resolveRuntimeExpression(link.expression, undefined, state);
+    } else {
+      const completed = state?.completedCases?.[link.source];
+      if (!completed) {
+        throw new Error(`link source '${link.source}' has no completed result in state`);
+      }
+      value = resolveRuntimeExpression(link.expression, completed, state);
     }
-    const value = resolveRuntimeExpression(link.expression, completed);
     if (link.kind === 'path') {
       url = url.replace(new RegExp(`\\{${link.name}\\}`, 'g'), encodeURIComponent(valueToString(value)));
     } else if (link.kind === 'query') {
@@ -692,11 +790,46 @@ function applyPendingLinks(config: any, state: any, pendingLinks: PendingLink[])
     } else if (link.kind === 'cookie') {
       mergeCookieHeader(updated.headers, { [link.name!]: valueToString(value) });
     } else if (link.kind === 'body') {
-      updated.data = value;
+      if (link.target) {
+        // set one nested field, preserving the rest of the example body.
+        // Clone first so the shared example object isn't mutated across runs.
+        updated.data =
+          updated.data && typeof updated.data === 'object' ? JSON.parse(JSON.stringify(updated.data)) : {};
+        setByJsonPointer(updated.data, link.target, value);
+      } else {
+        updated.data = value;
+      }
     }
   }
   updated.url = url;
   return updated;
+}
+
+// Run a regex over the SUT's per-request logs and stash the capture into
+// run state, then chain any user postTest. An invalid pattern degrades to a
+// no-op capture (never throws at load or run time).
+function composeCaptureFromLogs(
+  capture: { pattern: string; into: string; group?: number },
+  userPostTest: OpenApiPostTestHook | undefined
+): OpenApiPostTestHook {
+  let regex: RegExp | undefined;
+  try {
+    regex = new RegExp(capture.pattern);
+  } catch {
+    regex = undefined;
+  }
+  return async (response: any, state: any, ctx: any) => {
+    if (regex) {
+      for (const log of ctx?.logs ?? []) {
+        const match = regex.exec(String(log?.message ?? ''));
+        if (match) {
+          state[capture.into] = match[capture.group ?? 1] ?? match[0];
+          break;
+        }
+      }
+    }
+    if (userPostTest) await userPostTest(response, state, ctx);
+  };
 }
 
 function composeBeforeSend(pendingLinks: PendingLink[], userBeforeSend: OpenApiBeforeSendHook | undefined): OpenApiBeforeSendHook {
@@ -716,9 +849,9 @@ function composeBeforeSend(pendingLinks: PendingLink[], userBeforeSend: OpenApiB
 function resolveLinkCandidatesForParams(
   sources: LinkSource[] | undefined,
   operationIdToGeneratedIds: Map<string, string[]>
-): { paramCandidates: ParamLinkCandidate[]; bodyCandidate?: BodyLinkCandidate } {
+): { paramCandidates: ParamLinkCandidate[]; bodyCandidates: BodyLinkCandidate[] } {
   const paramCandidates: ParamLinkCandidate[] = [];
-  let bodyCandidate: BodyLinkCandidate | undefined;
+  const bodyCandidates: BodyLinkCandidate[] = [];
   for (const source of sources || []) {
     const generatedIds = operationIdToGeneratedIds.get(source.from);
     if (!generatedIds || generatedIds.length !== 1) continue;
@@ -728,11 +861,19 @@ function resolveLinkCandidatesForParams(
         paramCandidates.push({ name: paramName, source: sourceId, expression });
       }
     }
-    if (!bodyCandidate && source.requestBody) {
-      bodyCandidate = { source: sourceId, expression: source.requestBody };
+    if (source.requestBody) {
+      const target = source.requestBodyTarget;
+      // A whole-body candidate (no target) is used at most once; targeted
+      // field candidates are deduped per target pointer.
+      const dup = target
+        ? bodyCandidates.some((c) => c.target === target)
+        : bodyCandidates.some((c) => !c.target);
+      if (!dup) {
+        bodyCandidates.push({ source: sourceId, expression: source.requestBody, target });
+      }
     }
   }
-  return { paramCandidates, bodyCandidate };
+  return { paramCandidates, bodyCandidates };
 }
 
 function collectLinks(operationEntries: OperationEntry[]): Map<string, LinkSource[]> {
@@ -755,6 +896,12 @@ function collectLinks(operationEntries: OperationEntry[]): Map<string, LinkSourc
           parameters:
             (link as any).parameters && typeof (link as any).parameters === 'object' ? (link as any).parameters : {},
           requestBody: typeof (link as any).requestBody === 'string' ? (link as any).requestBody : undefined,
+          // Vendor extension: JSON pointer into the target request body to
+          // set, instead of replacing the whole body.
+          requestBodyTarget:
+            typeof (link as any)['x-spectest-requestBodyTarget'] === 'string'
+              ? (link as any)['x-spectest-requestBodyTarget']
+              : undefined,
         });
         index.set(targetOperationId, list);
       }
@@ -795,7 +942,7 @@ async function buildTestForExample(
       return test;
     }
 
-    const { paramCandidates, bodyCandidate } = resolveLinkCandidatesForParams(
+    const { paramCandidates, bodyCandidates } = resolveLinkCandidatesForParams(
       linkIndex.get(rawOperationId),
       operationIdToGeneratedIds
     );
@@ -803,18 +950,18 @@ async function buildTestForExample(
     const { endpointPath, query, headers, cookies, pendingLinks } = buildParameters(pathKey, parameters, key, paramCandidates);
     mergeCookieHeader(headers, cookies);
 
-    const { value: rawBody, pendingLink: bodyPendingLink } = buildRequestBody(resolvedOperation, key, bodyCandidate);
-    if (bodyPendingLink) pendingLinks.push(bodyPendingLink);
+    const { value: rawBody, pendingLinks: bodyPendingLinks } = buildRequestBody(resolvedOperation, key, bodyCandidates);
+    pendingLinks.push(...bodyPendingLinks);
     // When scaffolding a static file (preservePlaceholders), keep `{{uuid}}`/
     // `{{timestamp}}`/`{{shortId}}` tokens literal instead of baking in a
     // one-time value: generate-command.ts detects them and wires a
     // beforeSend that re-rolls them on every send, so re-running the
     // generated file doesn't replay the same "must not already exist" value
     // (e.g. a signup email) forever.
-    const body =
+    const { body, generated: generatedValues } =
       rawBody !== undefined
         ? applyGeneratorOverrides(preservePlaceholders ? rawBody : resolveGeneratorPlaceholders(rawBody), xSpectest.generate)
-        : rawBody;
+        : { body: rawBody, generated: {} as Record<string, string> };
 
     const response = chooseResponse(resolvedOperation, key, xSpectest.status);
     const endpointWithoutQuery = `${serverPrefix}${endpointPath}`;
@@ -841,6 +988,9 @@ async function buildTestForExample(
     };
     if (body !== undefined) {
       test.request!.body = body;
+    }
+    if (Object.keys(generatedValues).length) {
+      test.generatedValues = generatedValues;
     }
     if (requestMeta.credentials) {
       (test.request as any).credentials = requestMeta.credentials;
@@ -875,7 +1025,9 @@ async function buildTestForExample(
     } else if (hooks.beforeSend) {
       test.beforeSend = hooks.beforeSend;
     }
-    if (hooks.postTest) {
+    if (xSpectest.captureFromLogs) {
+      test.postTest = composeCaptureFromLogs(xSpectest.captureFromLogs, hooks.postTest);
+    } else if (hooks.postTest) {
       test.postTest = hooks.postTest;
     }
 

@@ -570,6 +570,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
         headers: response.headers,
         data: response.data,
       },
+      generatedValues: test.generatedValues,
     };
   } catch (error) {
     const latency = Date.now() - startTime;

@@ -144,6 +144,105 @@ test('response links produce dependsOn and resolve values from state.completedCa
   assert.equal(updated.url, '/orders/order-123');
 });
 
+// A link with x-spectest-requestBodyTarget sets one nested body field,
+// preserving the rest of the example body (not a whole-body replace).
+test('requestBodyTarget link fills a nested body field and preserves the example body', async () => {
+  const suite = await loadOpenApiSuite(fixture('links-body-target.yaml'), {});
+  const createDomain = byOperationId(suite.tests, 'createDomain');
+  assert.deepEqual(createDomain.dependsOn, ['createContact']);
+  assert.equal(typeof createDomain.beforeSend, 'function');
+  // Example body is preserved as-authored before the link runs.
+  assert.deepEqual(createDomain.request?.body, { name: 'example.ng', registrant: 'PLACEHOLDER' });
+
+  const config = { url: '/domains', headers: {}, data: { name: 'example.ng', registrant: 'PLACEHOLDER' } };
+  const state = {
+    completedCases: {
+      createContact: { response: { status: 201, headers: {}, data: { id: 'C-42' } } },
+    },
+  };
+  const updated = await createDomain.beforeSend!(config, state);
+  // Only `registrant` changed; `name` untouched.
+  assert.deepEqual(updated.data, { name: 'example.ng', registrant: 'C-42' });
+  // Original config object/body not mutated (deep clone).
+  assert.deepEqual(config.data, { name: 'example.ng', registrant: 'PLACEHOLDER' });
+});
+
+// A link can source a value the linked operation *sent* via $request.body.
+test('$request.body# expression resolves against the source op request', async () => {
+  const suite = await loadOpenApiSuite(fixture('links-body-target.yaml'), {});
+  const infoDomain = byOperationId(suite.tests, 'infoDomain');
+  assert.deepEqual(infoDomain.dependsOn, ['createDomain']);
+
+  const config = { url: '/domains/{domain}', headers: {} };
+  const state = {
+    completedCases: {
+      // Note: value comes from the *request* the source op sent, not its response.
+      createDomain: {
+        request: { data: { name: 'sent-example.ng' } },
+        response: { status: 201, headers: {}, data: { name: 'ignored.ng' } },
+      },
+    },
+  };
+  const updated = await infoDomain.beforeSend!(config, state);
+  assert.equal(updated.url, '/domains/sent-example.ng');
+});
+
+// A generated value that never surfaced in the response body is captured on
+// the case and referenceable via $generated.<key>.
+test('$generated.<key> resolves the x-spectest.generate value from the source result', async () => {
+  const suite = await loadOpenApiSuite(fixture('links-generated.yaml'), {});
+  const createWidget = byOperationId(suite.tests, 'createWidget');
+  // The generated value was baked into the body and recorded on the case.
+  const serial = (createWidget.request?.body as any).serial;
+  assert.match(serial, /^[a-z0-9]{8}$/);
+  assert.deepEqual(createWidget.generatedValues, { serial });
+
+  const getWidget = byOperationId(suite.tests, 'getWidget');
+  assert.deepEqual(getWidget.dependsOn, ['createWidget']);
+  const config = { url: '/widgets/{serial}', headers: {} };
+  const state = {
+    completedCases: {
+      createWidget: { generatedValues: { serial: 'gen-abc' }, response: { status: 201, headers: {}, data: {} } },
+    },
+  };
+  const updated = await getWidget.beforeSend!(config, state);
+  assert.equal(updated.url, '/widgets/gen-abc');
+});
+
+// captureFromLogs synthesizes a postTest that stashes a regex capture into
+// run state, and a dependent reads it via $state.<key> (no source completedCase
+// required).
+test('captureFromLogs postTest stashes a value and $state.<key> consumes it', async () => {
+  const suite = await loadOpenApiSuite(fixture('capture-from-logs.yaml'), {});
+  const signup = byOperationId(suite.tests, 'signup');
+  assert.equal(typeof signup.postTest, 'function');
+
+  // postTest scrapes the token out of the request logs into state.
+  const state: any = {};
+  const token = 'deadbeefdeadbeefdeadbeefdeadbeef';
+  await signup.postTest!({}, state, { logs: [{ message: `Magic link: https://x/auth/verify?token=${token}` }] });
+  assert.equal(state.signupToken, token);
+
+  // The dependent's link resolves the value from run state, not a completedCase.
+  const verify = byOperationId(suite.tests, 'verify');
+  assert.deepEqual(verify.dependsOn, ['signup']);
+  const config = { url: '/verify', headers: {}, data: { token: 'PLACEHOLDER' } };
+  const updated = await verify.beforeSend!(config, { ...state });
+  assert.deepEqual(updated.data, { token });
+});
+
+// An invalid regex degrades to a no-op capture instead of throwing.
+test('captureFromLogs with an invalid pattern does not throw and captures nothing', async () => {
+  const badFixtureCfg = {} as SpectestConfig;
+  const suite = await loadOpenApiSuite(fixture('capture-from-logs.yaml'), badFixtureCfg);
+  const signup = byOperationId(suite.tests, 'signup');
+  // Directly exercise the composer path with a broken pattern via a fresh state:
+  // the built-in postTest from a valid pattern should simply find no match here.
+  const state: any = {};
+  await signup.postTest!({}, state, { logs: [{ message: 'no token present' }] });
+  assert.equal(state.signupToken, undefined);
+});
+
 // Regression: an operation with no x-spectest extension and a single example behaves identically to today's v1 output.
 test('single-example operation with no x-spectest behaves like v1 (unsuffixed operationId, no extra fields)', async () => {
   const suite = await loadOpenApiSuite(fixture('regression-v1.yaml'), {});

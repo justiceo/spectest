@@ -1,0 +1,44 @@
+openapi: 3.0.3
+info:
+  title: Generated-Value Link Fixture
+  version: 1.0.0
+paths:
+  /widgets:
+    post:
+      operationId: createWidget
+      x-spectest:
+        generate:
+          serial: shortId
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { serial: "SEED", label: "w" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { ok: true }
+          links:
+            # reference the generated value that never surfaced in the
+            # response body.
+            EchoSerial:
+              operationId: getWidget
+              parameters:
+                serial: "$generated.serial"
+  /widgets/{serial}:
+    get:
+      operationId: getWidget
+      parameters:
+        - name: serial
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { serial: "x" }

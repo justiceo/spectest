@@ -1,0 +1,61 @@
+openapi: 3.0.3
+info:
+  title: Links Body-Target / Request-Expression Fixture
+  version: 1.0.0
+paths:
+  /contacts:
+    post:
+      operationId: createContact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { id: "C-1", name: "Ada" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { id: "C-1" }
+          links:
+            # fill just the nested `registrant` field of createDomain's body.
+            UseAsRegistrant:
+              operationId: createDomain
+              requestBody: "$response.body#/id"
+              x-spectest-requestBodyTarget: "/registrant"
+  /domains:
+    post:
+      operationId: createDomain
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { name: "example.ng", registrant: "PLACEHOLDER" }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              example: { name: "example.ng" }
+          links:
+            # source a value the create op *sent* (its request body), not
+            # what it returned.
+            InfoByName:
+              operationId: infoDomain
+              parameters:
+                domain: "$request.body#/name"
+  /domains/{domain}:
+    get:
+      operationId: infoDomain
+      parameters:
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              example: { name: "example.ng", status: "ok" }

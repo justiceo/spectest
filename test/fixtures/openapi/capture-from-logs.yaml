@@ -1,0 +1,42 @@
+openapi: 3.0.3
+info:
+  title: Capture-From-Logs Fixture
+  version: 1.0.0
+paths:
+  /signup:
+    post:
+      operationId: signup
+      x-spectest:
+        captureFromLogs:
+          pattern: "verify\\?token=([a-f0-9]{32})"
+          into: signupToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { email: "a@b.com" }
+      responses:
+        '200':
+          description: Link sent
+          content:
+            application/json:
+              example: { ok: true }
+          links:
+            VerifyWithToken:
+              operationId: verify
+              requestBody: "$state.signupToken"
+              x-spectest-requestBodyTarget: "/token"
+  /verify:
+    post:
+      operationId: verify
+      requestBody:
+        required: true
+        content:
+          application/json:
+            example: { token: "PLACEHOLDER" }
+      responses:
+        '200':
+          description: Verified
+          content:
+            application/json:
+              example: { ok: true }

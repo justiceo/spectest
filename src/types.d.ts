@@ -53,6 +53,12 @@ export interface TestCase {
   postTest?: (res: any, state: any, ctx: any) => Promise<any> | any;
   /** Provided by the runner */
   suiteName?: string;
+  /**
+   * Concrete values produced by `x-spectest.generate` for this case, keyed by
+   * the generate-map path. Surfaced on the completed result so dependents can
+   * reference them via a `$generated.<key>` link expression.
+   */
+  generatedValues?: Record<string, string>;
 }
 
 export interface Suite {
@@ -197,6 +203,8 @@ export interface TestResult {
     headers: any;
     data: any;
   };
+  /** Concrete `x-spectest.generate` values used, for `$generated.<key>` links. */
+  generatedValues?: Record<string, string>;
 }
 
 export interface TestRunResult {

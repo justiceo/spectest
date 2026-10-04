@@ -2,6 +2,8 @@ import path from 'path';
 import { existsSync } from 'fs';
 import defaultConfig from './default.config.js';
 import type {
+  ArazzoInputsConfig,
+  ArazzoSourceOverride,
   MissingRecordingBehavior,
   OpenApiNegativeTestsConfig,
   OpenApiRequestMutator,
@@ -47,6 +49,15 @@ export interface CliConfig {
   coverageReportFile?: string;
   negativeTests?: boolean;
   openapiNegativeTests?: OpenApiNegativeTestsConfig;
+  arazzo?: string | string[];
+  arazzoInputs?: ArazzoInputsConfig;
+  arazzoInputsFile?: string;
+  arazzoSources?: Record<string, string | ArazzoSourceOverride>;
+  arazzoMaxIterations?: number;
+  arazzoResponseValidation?: 'auto' | 'always' | 'never';
+  arazzoStrict?: boolean;
+  arazzoFilePattern?: string;
+  workflows?: string[];
 }
 
 function parseTestOutput(value: string | undefined): TestOutputMode {
@@ -139,6 +150,47 @@ function validateConfiguredOutboundThrottle(value: unknown): asserts value is Ou
   }
 }
 
+function parseArazzoResponseValidation(value: string | undefined): 'auto' | 'always' | 'never' {
+  if (value === 'auto' || value === 'always' || value === 'never') return value;
+  console.error('error: --arazzo-response-validation must be "auto", "always", or "never"');
+  process.exit(1);
+}
+
+function validateConfiguredArazzo(cfg: CliConfig): void {
+  if (cfg.arazzo !== undefined) {
+    const list = Array.isArray(cfg.arazzo) ? cfg.arazzo : [cfg.arazzo];
+    if (list.some((item) => typeof item !== 'string' || !item)) {
+      console.error('error: arazzo must be a path or an array of paths');
+      process.exit(1);
+    }
+  }
+  if (cfg.arazzoResponseValidation !== undefined && !['auto', 'always', 'never'].includes(cfg.arazzoResponseValidation)) {
+    console.error('error: arazzoResponseValidation must be "auto", "always", or "never"');
+    process.exit(1);
+  }
+  if (cfg.arazzoMaxIterations !== undefined) {
+    validateConfiguredPositiveInt('arazzoMaxIterations', cfg.arazzoMaxIterations);
+  }
+  if (cfg.arazzoInputs !== undefined && typeof cfg.arazzoInputs !== 'function' && (typeof cfg.arazzoInputs !== 'object' || cfg.arazzoInputs === null)) {
+    console.error('error: arazzoInputs must be an object keyed by workflowId, or a function');
+    process.exit(1);
+  }
+  if (cfg.arazzoSources !== undefined) {
+    const invalid =
+      typeof cfg.arazzoSources !== 'object' ||
+      cfg.arazzoSources === null ||
+      Object.values(cfg.arazzoSources).some((v) => typeof v !== 'string' && (typeof v !== 'object' || v === null));
+    if (invalid) {
+      console.error('error: arazzoSources must map source names to a url string or { url?, baseUrl?, server? }');
+      process.exit(1);
+    }
+  }
+  if (cfg.workflows !== undefined && (!Array.isArray(cfg.workflows) || cfg.workflows.some((w) => typeof w !== 'string'))) {
+    console.error('error: workflows must be an array of workflowIds');
+    process.exit(1);
+  }
+}
+
 const HELP_OPTIONS: [string, string][] = [
   ['--config <file>', 'Path to an extra config file'],
   ['--base-url <url>', 'Base URL of the API (default: http://localhost:3000)'],
@@ -168,6 +220,12 @@ const HELP_OPTIONS: [string, string][] = [
   ['--coverage-report', 'Print a per-operation OpenAPI contract coverage report after the run'],
   ['--coverage-report-file <path>', 'Write the coverage report to a file instead of stdout'],
   ['--negative-tests', 'Enable schema-derived negative test generation for OpenAPI operations (default: off)'],
+  ['--arazzo <path[,path]>', 'Arazzo document(s) to run (also discovered as *.arazzo.{yaml,yml,json} under the test dir)'],
+  ['--arazzo-inputs <file>', 'JSON/YAML file of workflow inputs keyed by workflowId'],
+  ['--workflow <id[,id]>', 'Only run these Arazzo workflows (plus the workflows they depend on)'],
+  ['--arazzo-max-iterations <n>', 'Loop bound for workflows that jump back to earlier steps (default: 10)'],
+  ['--arazzo-response-validation <mode>', 'Check step responses against the OpenAPI schema: auto, always, never (default: auto)'],
+  ['--arazzo-strict', 'Fail an Arazzo document that does not conform to the Arazzo JSON Schema'],
   ['--dir <path>', 'Root directory of the project (default: current working directory)'],
   ['-h, --help', 'Show this help message and exit'],
 ];
@@ -187,9 +245,11 @@ Examples:
   spectest --openapi ./openapi.yaml --base-url=https://api.example.com
   spectest --tags=smoke,auth ./test/auth.spectest.js
   spectest --openapi ./openapi.yaml --coverage-report
+  spectest --arazzo ./checkout.arazzo.yaml --arazzo-inputs ./inputs.json --base-url=https://api.example.com
 
 Commands:
   generate openapi-tests --openapi <path> --output <dir>  Scaffold editable .spectest.js files from an OpenAPI document
+  generate arazzo-tests --arazzo <path> --output <dir>    Scaffold editable .spectest.js files from an Arazzo document
 `);
 }
 
@@ -197,7 +257,7 @@ Commands:
 // mistaken for one. Without this, `--happy ./test/foo.spectest.js` silently swallows the suite file
 // because parseArgs' token consumption runs before the switch below and can't tell a boolean flag
 // from a value-taking one.
-const NO_VALUE_FLAGS = new Set(['happy', 'randomize', 'verbose', 'coverage-report', 'negative-tests']);
+const NO_VALUE_FLAGS = new Set(['happy', 'randomize', 'verbose', 'coverage-report', 'negative-tests', 'arazzo-strict']);
 
 function parseArgs(argv: string[]): CliConfig {
   const args = argv.slice(2);
@@ -306,6 +366,28 @@ function parseArgs(argv: string[]): CliConfig {
         case 'negative-tests':
           raw.negativeTests = true;
           break;
+        case 'arazzo': {
+          const paths = value ? value.split(',').map((p) => p.trim()).filter(Boolean) : [];
+          const existing = Array.isArray(raw.arazzo) ? raw.arazzo : raw.arazzo ? [raw.arazzo] : [];
+          raw.arazzo = [...existing, ...paths];
+          break;
+        }
+        case 'arazzo-inputs':
+          raw.arazzoInputsFile = value;
+          break;
+        case 'workflow':
+        case 'workflows':
+          raw.workflows = [...(raw.workflows || []), ...(value ? value.split(',').map((w) => w.trim()).filter(Boolean) : [])];
+          break;
+        case 'arazzo-max-iterations':
+          raw.arazzoMaxIterations = parsePositiveInt('--arazzo-max-iterations', value);
+          break;
+        case 'arazzo-response-validation':
+          raw.arazzoResponseValidation = parseArazzoResponseValidation(value);
+          break;
+        case 'arazzo-strict':
+          raw.arazzoStrict = true;
+          break;
         case 'dir':
           raw.projectRoot = value;
           break;
@@ -372,6 +454,7 @@ export async function loadConfigFromCliOpts(cliOpts: CliConfig): Promise<CliConf
   validateConfiguredOutboundThrottle(cfg.outboundThrottle);
   validateConfiguredPositiveInt('serverStartupTimeout', cfg.serverStartupTimeout);
   validateConfiguredPositiveInt('serverHealthCheckInterval', cfg.serverHealthCheckInterval);
+  validateConfiguredArazzo(cfg);
   if (cfg.recordingFile) {
     cfg.recordingFile = path.resolve(projectRoot, cfg.recordingFile);
   }
@@ -380,6 +463,12 @@ export async function loadConfigFromCliOpts(cliOpts: CliConfig): Promise<CliConf
   }
   if (cfg.coverageReportFile) {
     cfg.coverageReportFile = path.resolve(projectRoot, cfg.coverageReportFile);
+  }
+  if (cfg.arazzo) {
+    cfg.arazzo = (Array.isArray(cfg.arazzo) ? cfg.arazzo : [cfg.arazzo]).map((p) => path.resolve(projectRoot, p));
+  }
+  if (cfg.arazzoInputsFile) {
+    cfg.arazzoInputsFile = path.resolve(projectRoot, cfg.arazzoInputsFile);
   }
 
   return cfg;

@@ -14,9 +14,10 @@ import { coreLoaderPlugin } from './plugins/core-loader';
 import { openApiLoaderPlugin } from './plugins/openapi-loader';
 import { coreFilterPlugin } from './plugins/core-filter';
 import { consoleReporterPlugin } from './plugins/console-reporter';
+import { arazzoLoaderPlugin, DEFAULT_ARAZZO_FILE_PATTERN } from './plugins/arazzo-loader';
 import { buildCoverageReport, formatCoverageReport } from './coverage-report';
 import { HttpRecordingCassette, type MissingRecordingBehavior, type RecordingMode } from './recording-cassette';
-import type { Suite, TestCase, TestResult } from "./types";
+import type { Suite, TestCase, TestResult, WhenOutcome } from "./types";
 import { runGenerateCommand } from './generate-command';
 
 type SkipStatus = 'skipped' | 'failed-precondition';
@@ -30,6 +31,8 @@ class CancellationError extends Error {
 }
 
 async function runAllTests(cfg: any) {
+  // Lets generated suites (`spectest generate arazzo-tests`) reuse this run's config.
+  (globalThis as any).__SPECTEST_CONFIG__ = cfg;
   const server = new Server();
   const spectestVersion = await getSpectestVersion();
   const recordingEnabled = cfg.recording !== 'off';
@@ -53,6 +56,7 @@ async function runAllTests(cfg: any) {
   const host = new PluginHost([
     coreLoaderPlugin(cfg),
     openApiLoaderPlugin(cfg),
+    arazzoLoaderPlugin(cfg),
     coreFilterPlugin(cfg),
     consoleReporterPlugin(cfg),
   ]);
@@ -96,7 +100,8 @@ async function runAllTests(cfg: any) {
     .filter((entry) => entry.isFile() && pattern.test(path.join(entry.parentPath, entry.name)))
     .map((entry) => path.join(entry.parentPath, entry.name))
     .sort();
-  console.log("[spectest] Found " + suitePaths.length + " matching test files");
+  const arazzoPaths = discoverArazzoDocuments(cfg, testDir, entries, suitePaths);
+  console.log("[spectest] Found " + suitePaths.length + " matching test files" + (arazzoPaths.length ? ` and ${arazzoPaths.length} Arazzo document(s)` : ''));
 
   let suites: Suite[] = [];
   for (const p of suitePaths) {
@@ -106,6 +111,17 @@ async function runAllTests(cfg: any) {
   if (cfg.openapi) {
     const loaded = await host.loadSuites(cfg.openapi, { source: 'openapi' });
     suites.push(...loaded);
+  }
+  // Documents a generated suite already runs (via spectest/arazzo) aren't run twice.
+  const claimed: Set<string> = (globalThis as any).__SPECTEST_ARAZZO_CLAIMED__ || new Set();
+  for (const p of arazzoPaths.filter((candidate) => !claimed.has(candidate))) {
+    try {
+      const loaded = await host.loadSuites(p, { source: 'arazzo' });
+      suites.push(...loaded);
+    } catch (error) {
+      console.error(`❌ Failed to load Arazzo document ${path.relative(cfg.projectRoot || process.cwd(), p)}: ${error.message}`);
+      process.exit(1);
+    }
   }
   validateUniqueOperationIds(suites.flatMap((s) => [...s.setup, ...s.tests, ...s.teardown]));
 
@@ -203,6 +219,20 @@ async function runAllTests(cfg: any) {
       }
       scheduled.add(test);
 
+      if (typeof test.when === 'function') {
+        let verdict: WhenOutcome;
+        try {
+          verdict = await test.when(testState);
+        } catch (error) {
+          verdict = { skip: `when() threw: ${error?.message || error}` };
+        }
+        if (verdict !== true) {
+          const skip = verdict === false ? { skip: 'condition not met' } : verdict;
+          await passThrough(test, skip.skip, Boolean(skip.quiet));
+          return;
+        }
+      }
+
       testStatuses.set(test, 'running');
       testStartTimes.set(test, Date.now());
       await host.dispatchTestStart(test);
@@ -246,6 +276,24 @@ async function runAllTests(cfg: any) {
       }
     }
 
+    // A conditional skip resolves the test without failing its dependents.
+    async function passThrough(test: TestCase, reason: string, quiet: boolean): Promise<void> {
+      const result: TestResult = { ...createSkippedResult(test, 'skipped'), error: reason, note: reason, passThrough: true };
+      executedTests.add(test);
+      testStatuses.set(test, 'completed');
+      if (!test.quiet && !quiet) {
+        results.push(result);
+        phaseResults.push(result);
+        await host.dispatchTestEnd(test, result);
+      }
+      if (signal?.aborted) return;
+      const readyDependents = (test as any).dependents.filter((d: any) => {
+        d.unresolvedDependencies -= 1;
+        return d.unresolvedDependencies === 0 && !d.__runtimeSkip;
+      });
+      await Promise.all(readyDependents.map((d: any) => schedule(d)));
+    }
+
     const initialPromises = testCases
       .filter((t) => (t as any).unresolvedDependencies === 0)
       .map((t) => schedule(t));
@@ -264,7 +312,7 @@ async function runAllTests(cfg: any) {
     }
     const phasePassed = testCases.every((test) => {
       return test.skip || (executedTests.has(test) && !runtimeSkipped.has(test));
-    }) && phaseResults.every((r) => r.status === 'passed');
+    }) && phaseResults.every((r) => r.status === 'passed' || r.passThrough);
     return phasePassed;
   }
 
@@ -291,11 +339,11 @@ async function runAllTests(cfg: any) {
     }
     rateLimiter.stop();
 
-    const explicitlySkipped = tests.filter((t) => t.skip && !executedTests.has(t));
+    const explicitlySkipped = tests.filter((t) => t.skip && !t.quiet && !executedTests.has(t));
     const skipResults = [
       ...explicitlySkipped.map((test) => createSkippedResult(test, 'skipped')),
       ...Array.from(runtimeSkipped)
-        .filter((test) => !test.skip && !executedTests.has(test))
+        .filter((test) => !test.skip && !test.quiet && !executedTests.has(test))
         .map((test) => createSkippedResult(test, 'failed-precondition')),
     ];
     const finalResults = [...results, ...skipResults].sort((a, b) => {
@@ -323,6 +371,9 @@ async function runAllTests(cfg: any) {
       if (test.skip || executedTests.has(test) || status === 'completed' || status === 'cancelled') {
         continue;
       }
+      if (test.quiet && status !== 'running') {
+        continue;
+      }
       const startedAt = testStartTimes.get(test);
       const result = createCancelledResult(test, startedAt ? Date.now() - startedAt : 0);
       results.push(result);
@@ -339,10 +390,34 @@ async function runAllTests(cfg: any) {
   }
 }
 
+// Explicit `arazzo` paths plus `*.arazzo.{yaml,yml,json}` files under testDir.
+// Sub-directories of testDir named `fixtures` or `node_modules` are not
+// searched, so example and fixture documents aren't picked up as suites.
+function discoverArazzoDocuments(cfg: any, testDir: string, entries: any[], suitePaths: string[]): string[] {
+  const explicit: string[] = (Array.isArray(cfg.arazzo) ? cfg.arazzo : cfg.arazzo ? [cfg.arazzo] : []).map((p: string) =>
+    path.resolve(cfg.projectRoot || process.cwd(), p)
+  );
+  const discovered: string[] = [];
+  const patternSource = cfg.arazzoFilePattern ?? DEFAULT_ARAZZO_FILE_PATTERN;
+  if (patternSource) {
+    const arazzoPattern = new RegExp(patternSource, 'i');
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const full = path.join(entry.parentPath, entry.name);
+      const segments = path.relative(testDir, path.dirname(full)).split(path.sep);
+      if (segments.includes('node_modules') || segments.includes('fixtures')) continue;
+      if (arazzoPattern.test(full) && !suitePaths.includes(full)) discovered.push(full);
+    }
+  }
+  return [...new Set([...explicit, ...discovered.sort()])];
+}
+
 function createSkippedResult(test: TestCase, status: SkipStatus): TestResult {
   return {
     status,
     error: test.skipReason,
+    // Loaders that record provenance (e.g. Arazzo) surface their skip reasons in the summary.
+    ...(test.source && test.skipReason && status === 'skipped' ? { note: test.skipReason } : {}),
     latency: 0,
     requestId: null,
     testName: test.name,
@@ -428,7 +503,62 @@ function resolveRecordingMode(test: TestCase, cfg: any): RecordingMode {
   return test.recording || cfg.recording;
 }
 
-async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter, cfg: any, signal?: AbortSignal): Promise<TestResult> {
+// Hooks receive a detached copy of run state. `Headers` objects (stored on
+// completed results) don't survive JSON cloning, so convert them to plain objects.
+export function cloneStateForHook(state: any): any {
+  return JSON.parse(
+    JSON.stringify(state, (_key, value) => (value instanceof Headers ? Object.fromEntries(value.entries()) : value))
+  );
+}
+
+export async function runTest(test: TestCase, api: HttpClient, testState: any, server: Server, rateLimiter: RateLimiter, cfg: any, signal?: AbortSignal): Promise<TestResult> {
+  const limit = test.retry ? Math.max(0, Math.floor(Number(test.retry.limit) || 0)) : 0;
+  const scratch: Record<string, any> = {};
+  for (let attempt = 1; ; attempt += 1) {
+    const result = await runAttempt(test, api, testState, server, rateLimiter, cfg, signal, attempt, scratch);
+    const decision = result.status === 'cancelled' || attempt > limit ? null : decideRetry(test, result, attempt);
+    if (!decision) {
+      delete result.retryHint;
+      if (attempt > 1) result.attempts = attempt;
+      return result;
+    }
+    try {
+      await abortableDelay(decision.delayMs, signal);
+    } catch (error) {
+      if (isCancellationError(error, signal)) {
+        return createCancelledResult(test, result.latency);
+      }
+      throw error;
+    }
+  }
+}
+
+function decideRetry(test: TestCase, result: TestResult, attempt: number): { delayMs: number } | null {
+  const defaultDelay = Math.max(0, Number(test.retry?.delayMs) || 0);
+  if (result.retryHint === false) return null;
+  if (result.retryHint) {
+    return { delayMs: Math.max(0, Number(result.retryHint.delayMs ?? defaultDelay) || 0) };
+  }
+  if (typeof test.retry?.shouldRetry === 'function') {
+    const verdict = test.retry.shouldRetry(result, attempt);
+    if (!verdict) return null;
+    if (verdict === true) return { delayMs: defaultDelay };
+    return { delayMs: Math.max(0, Number(verdict.delayMs ?? defaultDelay) || 0) };
+  }
+  return result.status === 'failed' ? { delayMs: defaultDelay } : null;
+}
+
+async function runAttempt(
+  test: TestCase,
+  api: HttpClient,
+  testState: any,
+  server: Server,
+  rateLimiter: RateLimiter,
+  cfg: any,
+  signal: AbortSignal | undefined,
+  attempt: number,
+  scratch: Record<string, any>
+): Promise<TestResult> {
   const startTime = Date.now();
   let requestId: string | null = null;
   if (test.request?.headers) {
@@ -450,48 +580,54 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
     }
     throwIfCancelled(signal);
 
-    let config = {
+    let config: any = {
       method: test.request?.method || 'GET',
       url: test.endpoint,
       // todo: rename data to body.
       data: test.request?.body,
       headers: { ...test.request?.headers } as Record<string, string>,
     };
+    if (test.request?.redirect) config.redirect = test.request.redirect;
+    let response: { status: number; data: any; headers: Headers };
 
-    if (test.request?.credentials === 'include' && testState.sessionCookie) {
-      config.headers.Cookie = testState.sessionCookie;
+    if (test.virtual) {
+      response = { status: 0, data: null, headers: new Headers() };
+    } else {
+      if (test.request?.credentials === 'include' && testState.sessionCookie) {
+        config.headers.Cookie = testState.sessionCookie;
+      }
+
+      if (typeof test.beforeSend === 'function') {
+        const immutableState = cloneStateForHook(testState);
+        const updatedConfig = await test.beforeSend(config, immutableState);
+        if (updatedConfig) config = updatedConfig;
+      }
+      throwIfCancelled(signal);
+
+      if (cfg.recording !== 'off') {
+        config.headers = { ...config.headers };
+        config.headers['x-spectest-case-id'] = test.operationId || test.name;
+        config.headers['x-spectest-test-name'] = test.name;
+        config.headers['x-spectest-suite-name'] = test.suiteName || '';
+        config.headers['x-spectest-recording-mode'] = resolveRecordingMode(test, cfg);
+        config.headers['x-spectest-missing-recording-behavior'] = cfg.missingRecordingBehavior as MissingRecordingBehavior;
+      }
+
+      await rateLimiter.acquire(signal);
+      throwIfCancelled(signal);
+      response = await api.request({ ...config, timeout: testTimeout, signal });
+
+      const sessionCookie = response.headers.get('set-cookie') ?? "";
+      if (sessionCookie) {
+        testState.sessionCookie = sessionCookie;
+      }
     }
 
-    if (typeof test.beforeSend === 'function') {
-      const immutableState = JSON.parse(JSON.stringify(testState));
-      const updatedConfig = await test.beforeSend(config, immutableState);
-      if (updatedConfig) config = updatedConfig;
-    }
-    throwIfCancelled(signal);
-
-    if (cfg.recording !== 'off') {
-      config.headers = { ...config.headers };
-      config.headers['x-spectest-case-id'] = test.operationId || test.name;
-      config.headers['x-spectest-test-name'] = test.name;
-      config.headers['x-spectest-suite-name'] = test.suiteName || '';
-      config.headers['x-spectest-recording-mode'] = resolveRecordingMode(test, cfg);
-      config.headers['x-spectest-missing-recording-behavior'] = cfg.missingRecordingBehavior as MissingRecordingBehavior;
-    }
-
-    await rateLimiter.acquire(signal);
-    throwIfCancelled(signal);
-    const response = await api.request({ ...config, timeout: testTimeout, signal });
-
-    const sessionCookie = response.headers.get('set-cookie') ?? "";
-    if (sessionCookie) {
-      testState.sessionCookie = sessionCookie;
-    }
+    const requestLogs = () =>
+      requestId ? server.getLogs().filter((log) => log.message.includes(requestId)) : [];
 
     if (typeof test.postTest === 'function') {
-      const requestLogs = requestId
-        ? server.getLogs().filter((log) => log.message.includes(requestId))
-        : [];
-      await test.postTest(response, testState, { requestId, logs: requestLogs });
+      await test.postTest(response, testState, { requestId, logs: requestLogs() });
     }
     throwIfCancelled(signal);
 
@@ -504,7 +640,7 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       passed = false;
     }
 
-    if (expectedResponse.status === 200 && !expectedResponse.json?.message && response.data.message) {
+    if (expectedResponse.status === 200 && !expectedResponse.json?.message && response.data?.message) {
       errors.push(`⚠️ Unexpected status message: ${response.data.message}`);
     }
 
@@ -555,8 +691,35 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       }
     }
 
+    let note: string | undefined;
+    let retryHint: TestResult['retryHint'];
+    let data = response.data;
+    if (typeof test.assert === 'function') {
+      try {
+        const outcome = await test.assert(response, testState, {
+          attempt,
+          scratch,
+          request: config,
+          requestId,
+          logs: requestLogs(),
+        });
+        const normalized = Array.isArray(outcome) ? { errors: outcome } : outcome || {};
+        if (normalized.errors && normalized.errors.length > 0) {
+          errors.push(...normalized.errors);
+          passed = false;
+        }
+        if (normalized.note) note = normalized.note;
+        if (normalized.retry !== undefined) retryHint = normalized.retry;
+        if (test.virtual && normalized.data !== undefined) data = normalized.data;
+      } catch (error) {
+        errors.push(`assert hook threw: ${error?.message || error}`);
+        passed = false;
+      }
+    }
+    throwIfCancelled(signal);
+
     const latency = Date.now() - startTime;
-    return {
+    const result: TestResult = {
       status: passed ? 'passed' : 'failed',
       error: errors.map((e) => `\n\t- ${e}`).join(';'),
       latency,
@@ -564,14 +727,17 @@ async function runTest(test: TestCase, api: HttpClient, testState: any, server: 
       testName: test.name,
       operationId: test.operationId,
       suiteName: test.suiteName,
-      request: config,
+      request: test.virtual ? {} : config,
       response: {
         status: response.status,
         headers: response.headers,
-        data: response.data,
+        data,
       },
       generatedValues: test.generatedValues,
     };
+    if (note) result.note = note;
+    if (retryHint !== undefined) result.retryHint = retryHint;
+    return result;
   } catch (error) {
     const latency = Date.now() - startTime;
     if (isCancellationError(error, signal)) {

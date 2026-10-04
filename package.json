@@ -4,10 +4,10 @@
   "description": "Declarative API testing CLI for fast HTTP endpoint and REST API tests",
   "main": "dist/cli.js",
   "scripts": {
-    "build": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts src/throttle-preload.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
-    "build:prod": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/recording-preload.ts src/throttle-preload.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
+    "build": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/arazzo.ts src/recording-preload.ts src/throttle-preload.ts --bundle --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
+    "build:prod": "npx -y esbuild src/cli.ts src/helpers.ts src/recordings.ts src/arazzo.ts src/recording-preload.ts src/throttle-preload.ts --bundle --minify --platform=node --target=node20 --format=esm --packages=external --outdir=dist --banner:js=\"#!/usr/bin/env node\"",
     "test": "npm run build && node dist/cli.js --base-url=https://jsonplaceholder.typicode.com",
-    "test:unit": "node --import ./test/support/resolve-ts.mjs --test test/*.test.ts"
+    "test:unit": "node --import ./test/support/resolve-ts.mjs --test --test-concurrency=1 test/*.test.ts"
   },
   "keywords": [
     "api-testing",
@@ -41,9 +41,14 @@
   "type": "module",
   "dependencies": {
     "@mswjs/interceptors": "^0.41.9",
+    "@xmldom/xmldom": "^0.9.12",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
-    "js-yaml": "^4.1.0"
+    "fontoxpath": "^3.34.0",
+    "js-yaml": "^4.1.0",
+    "json-p3": "^2.3.2",
+    "jsonpath-plus": "^11.1.1",
+    "xpath": "^0.0.34"
   },
   "bin": {
     "spectest": "dist/cli.js"
@@ -51,7 +56,8 @@
   "exports": {
     ".": "./dist/cli.js",
     "./helpers": "./dist/helpers.js",
-    "./recordings": "./dist/recordings.js"
+    "./recordings": "./dist/recordings.js",
+    "./arazzo": "./dist/arazzo.js"
   },
   "devDependencies": {
     "@types/node": "^20.19.41",

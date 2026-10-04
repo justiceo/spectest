@@ -1,0 +1,15 @@
+# Minimal stand-in for the `./animals.yaml` that ../official/ExtendedParametersExample.arazzo.yaml
+# references but the Arazzo repository does not ship.
+openapi: 3.0.3
+info: { title: Public Zoo API, version: '1.0' }
+paths:
+  /animals:
+    post:
+      operationId: postAnimal
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { type: object } } } }
+  /animals/random:
+    get:
+      operationId: getRandomAnimal
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string } } } } } }

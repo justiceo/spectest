@@ -1,0 +1,215 @@
+arazzo: 1.1.0
+$self: https://spectest.dev/fixtures/payloads.arazzo.yaml
+info:
+  title: Shop payloads
+  version: 1.0.0
+sourceDescriptions:
+  - name: shop
+    url: ./shop.openapi.yaml
+    type: openapi
+workflows:
+  # Form-encoded object payload; contentType taken from the operation when omitted.
+  - workflowId: form-token
+    steps:
+      - stepId: token
+        operationId: getToken
+        requestBody:
+          payload: { grant_type: client_credentials, client_id: id, client_secret: sec }
+        successCriteria:
+          - condition: $statusCode == 200
+          - context: $request.header.Content-Type
+            condition: '^application/x-www-form-urlencoded'
+            type: regex
+          - condition: $request.body == 'grant_type=client_credentials&client_id=id&client_secret=sec'
+        outputs:
+          token:
+            context: $response.body
+            selector: $.access_token
+            type: jsonpath
+    outputs: { token: $steps.token.outputs.token }
+
+  # JSON text template: a quoted single expression keeps its type, embedded ones stay strings.
+  - workflowId: json-template
+    inputs:
+      type: object
+      properties:
+        customer: { type: object }
+        products: { type: array }
+    x-spectest:
+      inputs:
+        customer: { firstName: Ada, lastName: Lovelace }
+        products: [{ productCode: P1, purchaseAmount: { currency: USD, amount: 10 } }]
+    steps:
+      - stepId: echo
+        operationId: echo
+        requestBody:
+          contentType: application/json
+          payload: |
+            {
+              "customer": "{$inputs.customer}",
+              "products": "{$inputs.products}",
+              "greeting": "Hello {$inputs.customer#/firstName}!",
+              "count": {$inputs.products#/0/purchaseAmount/amount}
+            }
+        successCriteria:
+          - condition: $response.body#/body/customer/lastName == 'Lovelace'
+          - condition: $response.body#/body/products/0/productCode == 'P1'
+          - condition: $response.body#/body/greeting == 'Hello Ada!'
+          - condition: $response.body#/body/count == 10
+
+  # Payload replacements (JSON Pointer and JSONPath), selector objects in payloads, and $request in outputs.
+  - workflowId: replacements
+    steps:
+      - stepId: product
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 2 }]
+        outputs: { product: $response.body }
+      - stepId: echo
+        operationId: echo
+        requestBody:
+          contentType: application/json
+          payload:
+            items: [{ sku: ABC123, quantity: 1 }, { sku: XYZ, quantity: 1 }]
+            name:
+              context: $steps.product.outputs.product
+              selector: /name
+              type: jsonpointer
+            meta: { source: placeholder }
+          replacements:
+            - { target: /meta/source, value: '{$sourceDescriptions.shop.name}' }
+            - target: "$.items[?(@.sku=='ABC123')].quantity"
+              targetSelectorType: jsonpath
+              value:
+                context: $steps.product.outputs.product
+                selector: $.price
+                type: jsonpath
+        successCriteria:
+          - condition: $response.body#/body/items/0/quantity == 120
+          - condition: $response.body#/body/items/1/quantity == 1
+          - condition: $response.body#/body/name == 'Tabby'
+          - condition: $response.body#/body/meta/source == 'shop'
+        outputs:
+          sentQuantity: $request.body#/items/0/quantity
+          method: $method
+          url: $url
+    outputs:
+      quantity: $steps.echo.outputs.sentQuantity
+      method: $steps.echo.outputs.method
+      url: $steps.echo.outputs.url
+
+  # XML: templated payload, XPath replacement, XPath criteria (3.1 and 1.0) and an XPath selector output.
+  - workflowId: xml
+    steps:
+      - stepId: inventory
+        operationId: getInventoryXml
+        successCriteria:
+          - context: $response.body
+            condition: count(/inventory/item) = 2
+            type: xpath
+          - context: $response.body
+            condition: /inventory/item[@sku='A']/qty > 0
+            type: { type: xpath, version: xpath-10 }
+        outputs:
+          qtyA:
+            context: $response.body
+            selector: /inventory/item[@sku='A']/qty
+            type: xpath
+      - stepId: echo
+        operationId: echoXml
+        requestBody:
+          contentType: application/xml
+          payload: '<order><sku>{$inputs.sku}</sku><qty>0</qty><note>{$inputs.note}</note></order>'
+          replacements:
+            - { target: /order/qty, value: $steps.inventory.outputs.qtyA }
+        successCriteria:
+          - context: $response.body
+            condition: /order/qty = 3 and /order/note = 'fish & chips'
+            type: xpath
+    inputs: { type: object, properties: { sku: { type: string, default: A }, note: { type: string, default: 'fish & chips' } } }
+
+  # Parameters: workflow-level and reusable parameters, cookies, query arrays, and a querystring parameter.
+  - workflowId: params
+    parameters:
+      - { name: session, in: cookie, value: abc }
+      - { reference: $components.parameters.trace }
+    steps:
+      - stepId: echo
+        operationId: echo
+        parameters:
+          - { name: theme, in: cookie, value: dark }
+          - { name: tag, in: query, value: [a, b] }
+        requestBody: { payload: { ok: true } }
+        successCriteria:
+          - condition: $response.body#/headers/cookie == 'session=abc; theme=dark'
+          - condition: $response.body#/headers/x-trace == 'trace-1'
+          - condition: $request.query.tag[1] == 'b'
+      - stepId: search
+        operationId: search
+        parameters:
+          - { name: q, in: querystring, value: 'term={$inputs.term}&page=2' }
+        successCriteria:
+          - condition: $response.body#/query == 'term=fish&page=2'
+          - condition: $request.query.page == 2
+    inputs: { type: object, properties: { term: { type: string, default: fish } } }
+
+  # x-spectest hooks (from openapiHooks), forced contract validation, step timeout, $self.
+  - workflowId: hooks
+    x-spectest:
+      beforeSend: addTrace
+      validateResponse: always
+    steps:
+      - stepId: echo
+        operationId: echo
+        timeout: 5000
+        requestBody: { payload: { self: $self } }
+        successCriteria:
+          - condition: $response.body#/headers/x-trace == 'from-hook'
+          - condition: $response.body#/body/self == 'https://spectest.dev/fixtures/payloads.arazzo.yaml'
+
+  # goto workflowId with action parameters (1.1): control moves to the target, which receives inputs.
+  - workflowId: handoff
+    steps:
+      - stepId: pick
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 1 }]
+        onSuccess:
+          - name: lookup-other
+            type: goto
+            workflowId: show-product
+            parameters:
+              - { name: id, value: 3 }
+              - { name: from, value: $response.body#/name }
+      - stepId: skipped-by-handoff
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 2 }]
+  - workflowId: show-product
+    x-spectest: { skip: true }
+    inputs: { type: object, properties: { id: { type: integer }, from: { type: string } } }
+    steps:
+      - stepId: show
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: $inputs.id }]
+        successCriteria:
+          - condition: $response.body#/name == 'goldfish'
+          - condition: $inputs.from == 'Dalmatian'
+
+  # Checks other workflows' outputs (and depends on them implicitly through $workflows).
+  - workflowId: outputs-check
+    steps:
+      - stepId: echo
+        operationId: echo
+        requestBody:
+          payload:
+            token: $workflows.form-token.outputs.token
+            quantity: $workflows.replacements.outputs.quantity
+            method: $workflows.replacements.outputs.method
+        successCriteria:
+          - condition: $response.body#/body/token == 'cc-token'
+          - condition: $response.body#/body/quantity == 120
+          - condition: $response.body#/body/method == 'POST'
+          - context: $workflows.replacements.outputs.url
+            condition: '/api/echo$'
+            type: regex
+components:
+  parameters:
+    trace: { name: X-Trace, in: header, value: trace-1 }

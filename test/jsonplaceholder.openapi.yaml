@@ -1,0 +1,112 @@
+openapi: 3.1.0
+info:
+  title: JSONPlaceholder (subset)
+  version: 1.0.0
+  description: The operations used by jsonplaceholder.arazzo.yaml.
+servers:
+  - url: https://jsonplaceholder.typicode.com
+paths:
+  /users/{id}:
+    get:
+      operationId: getUser
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: A user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, username, email]
+                properties:
+                  id: { type: integer }
+                  username: { type: string }
+                  email: { type: string }
+  /posts:
+    get:
+      operationId: listPosts
+      parameters:
+        - { name: userId, in: query, schema: { type: integer } }
+      responses:
+        '200':
+          description: Posts
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Post' } }
+    post:
+      operationId: createPost
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NewPost' }
+      responses:
+        '201':
+          description: Created (not persisted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Post' }
+  /posts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getPost
+      responses:
+        '200':
+          description: A post
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Post' }
+        '404':
+          description: Not found
+    patch:
+      operationId: updatePost
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Post' }
+    delete:
+      operationId: deletePost
+      responses:
+        '200':
+          description: Deleted
+  /posts/{id}/comments:
+    get:
+      operationId: listComments
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: integer } }
+      responses:
+        '200':
+          description: Comments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [postId, email]
+                  properties:
+                    postId: { type: integer }
+                    email: { type: string }
+components:
+  schemas:
+    NewPost:
+      type: object
+      properties:
+        title: { type: string }
+        body: { type: string }
+        userId: { type: integer }
+    Post:
+      type: object
+      required: [id, title]
+      properties:
+        id: { type: integer }
+        userId: { type: integer }
+        title: { type: string }
+        body: { type: string }

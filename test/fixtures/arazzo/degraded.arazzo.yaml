@@ -1,0 +1,71 @@
+arazzo: 1.0.1
+info:
+  title: Degraded documents
+  version: 1.0.0
+sourceDescriptions:
+  - name: shop
+    url: ./shop.openapi.yaml
+    type: openapi
+  - name: gone
+    url: ./does-not-exist.openapi.yaml
+    type: openapi
+workflows:
+  - workflowId: unknown-operation
+    steps:
+      - stepId: ok
+        operationId: listProducts
+      - stepId: typo
+        operationId: listproducts
+  - workflowId: missing-source
+    steps:
+      - stepId: call
+        operationId: $sourceDescriptions.gone.listProducts
+  - workflowId: needs-inputs
+    inputs:
+      type: object
+      required: [apiKey]
+      properties: { apiKey: { type: string } }
+    steps:
+      - stepId: call
+        operationId: listProducts
+  - workflowId: depends-on-skipped
+    dependsOn: [needs-inputs]
+    steps:
+      - stepId: call
+        operationId: listProducts
+  - workflowId: missing-hook
+    x-spectest: { postTest: notConfigured }
+    steps:
+      - stepId: call
+        operationId: listProducts
+  - workflowId: cycle-a
+    dependsOn: [cycle-b]
+    steps:
+      - { stepId: call, operationId: listProducts }
+  - workflowId: cycle-b
+    dependsOn: [cycle-a]
+    steps:
+      - { stepId: call, operationId: listProducts }
+  - workflowId: bad-subworkflow
+    steps:
+      - stepId: call
+        workflowId: unknown-operation
+  - workflowId: unresolved-path-param
+    steps:
+      - stepId: call
+        operationId: getProduct
+        parameters:
+          - { name: productId, in: path, value: $inputs.notProvided }
+  - workflowId: bad-output
+    steps:
+      - stepId: call
+        operationId: listProducts
+        successCriteria: [{ condition: $statusCode == 200 }]
+    outputs:
+      broken: $steps.call.missingOutputsKeyword
+      unknown: $steps.call.outputs.nope
+  - workflowId: still-runs
+    steps:
+      - stepId: call
+        operationId: listProducts
+        successCriteria: [{ condition: $statusCode == 200 }]

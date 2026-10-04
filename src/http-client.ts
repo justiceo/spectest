@@ -1,5 +1,17 @@
 import type { PluginHost } from './plugin-host';
 
+// Plain objects and arrays are sent as JSON; fetch-native bodies (form data,
+// URLSearchParams, Blobs, buffers, streams) pass through untouched.
+function isJsonSerializable(data: unknown): boolean {
+  if (typeof data !== 'object' || data === null) return false;
+  if (typeof FormData !== 'undefined' && data instanceof FormData) return false;
+  if (data instanceof URLSearchParams) return false;
+  if (typeof Blob !== 'undefined' && data instanceof Blob) return false;
+  if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) return false;
+  if (typeof ReadableStream !== 'undefined' && data instanceof ReadableStream) return false;
+  return true;
+}
+
 export class HttpClient {
   private baseURL: string;
   private timeout: number;
@@ -30,15 +42,20 @@ export class HttpClient {
     const requestHeaders: Record<string, string> = { ...this.headers, ...options.headers };
     let requestBody = options.data;
 
-    if (typeof options.data === 'object' && options.data !== null) {
+    if (isJsonSerializable(options.data)) {
       requestBody = JSON.stringify(options.data);
-      requestHeaders['Content-Type'] = 'application/json';
+      // Keep an explicit content type (e.g. application/merge-patch+json); setting a
+      // second, differently-cased key would make fetch join the two values.
+      const hasContentType = Object.keys(requestHeaders).some((key) => key.toLowerCase() === 'content-type');
+      if (!hasContentType) requestHeaders['Content-Type'] = 'application/json';
     }
 
     const initialRequest = new Request(url.toString(), {
       method: options.method,
       headers: requestHeaders,
       body: requestBody,
+      // 'manual' surfaces a 3xx response itself instead of following it.
+      ...(options.redirect ? { redirect: options.redirect } : {}),
     });
 
     const transformedRequest = await this.pluginHost.transformRequest(

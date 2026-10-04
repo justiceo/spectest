@@ -1,3 +1,4 @@
+import path from 'path';
 import { describeOpenApiOperations } from './plugins/openapi-loader.js';
 import type { SpectestConfig, TestCase, TestResult } from './types.js';
 
@@ -6,6 +7,7 @@ export type CoverageStatus =
   | { kind: 'generated-failed' }
   | { kind: 'generated-skipped'; reason: string }
   | { kind: 'covered-by-handwritten'; operationId: string }
+  | { kind: 'covered-by-arazzo'; steps: string[]; failed: boolean }
   | { kind: 'uncovered' };
 
 export interface CoverageRow {
@@ -48,6 +50,30 @@ function stripQueryAndOrigin(endpoint: string): string {
   }
 }
 
+// Arazzo step nodes record which OpenAPI document and operation they called.
+function findArazzoCoverage(
+  openapiPath: string,
+  method: string,
+  pathKey: string,
+  operationId: string,
+  allTests: TestCase[],
+  resultsByOperationId: Map<string, TestResult>
+): { steps: string[]; failed: boolean } | undefined {
+  const location = path.resolve(openapiPath);
+  const executed = allTests.filter((test) => {
+    const source = test.source;
+    if (source?.kind !== 'arazzo' || source.node !== 'step' || source.sourceLocation !== location) return false;
+    const matches = source.sourceOperationId ? source.sourceOperationId === operationId : source.method === method && source.path === pathKey;
+    const status = resultsByOperationId.get(test.operationId!)?.status;
+    return matches && (status === 'passed' || status === 'failed');
+  });
+  if (executed.length === 0) return undefined;
+  return {
+    steps: executed.map((t) => t.operationId!),
+    failed: executed.some((t) => resultsByOperationId.get(t.operationId!)?.status === 'failed'),
+  };
+}
+
 function findHandwrittenMatch(method: string, pathKey: string, handwrittenTests: TestCase[]): TestCase | undefined {
   const regex = pathToRegex(pathKey);
   return handwrittenTests.find((test) => {
@@ -65,7 +91,7 @@ export async function buildCoverageReport(
 ): Promise<CoverageRow[]> {
   const operations = await describeOpenApiOperations(openapiPath, cfg);
   const generatedTests = allTests.filter(hasOpenApiTag);
-  const handwrittenTests = allTests.filter((test) => !hasOpenApiTag(test));
+  const handwrittenTests = allTests.filter((test) => !hasOpenApiTag(test) && test.source?.kind !== 'arazzo');
 
   const resultsByOperationId = new Map<string, TestResult>();
   for (const result of results) {
@@ -85,8 +111,11 @@ export async function buildCoverageReport(
       const anyFailed = executed.some((t) => resultsByOperationId.get(t.operationId!)?.status === 'failed');
       status = anyFailed ? { kind: 'generated-failed' } : { kind: 'generated-passed' };
     } else {
-      const handwrittenMatch = findHandwrittenMatch(op.method, op.pathKey, handwrittenTests);
-      if (handwrittenMatch) {
+      const arazzo = findArazzoCoverage(openapiPath, op.method, op.pathKey, op.operationId, allTests, resultsByOperationId);
+      const handwrittenMatch = arazzo ? undefined : findHandwrittenMatch(op.method, op.pathKey, handwrittenTests);
+      if (arazzo) {
+        status = { kind: 'covered-by-arazzo', steps: arazzo.steps, failed: arazzo.failed };
+      } else if (handwrittenMatch) {
         status = { kind: 'covered-by-handwritten', operationId: handwrittenMatch.operationId || handwrittenMatch.name };
       } else if (generatedForOp.length > 0) {
         status = { kind: 'generated-skipped', reason: generatedForOp[0].skipReason || 'skipped' };
@@ -111,6 +140,10 @@ function describeStatus(status: CoverageStatus): string {
       return `generated & skipped (${status.reason})`;
     case 'covered-by-handwritten':
       return `covered by hand-written test ${status.operationId}`;
+    case 'covered-by-arazzo': {
+      const shown = status.steps.slice(0, 3).join(', ') + (status.steps.length > 3 ? `, +${status.steps.length - 3} more` : '');
+      return `covered by Arazzo step${status.steps.length > 1 ? 's' : ''} ${shown} (${status.failed ? 'failed' : 'passed'})`;
+    }
     case 'uncovered':
       return 'uncovered';
     default:

@@ -108,7 +108,11 @@ export const consoleReporterPlugin = (cfg: SpectestConfig): Plugin => ({
         console.log(`\n🗂️  Suite: ${suite}`);
         suiteResults.forEach((result) => {
           const icon = resultIcon(result);
-          console.log(`  [${icon}] ${result.testName} (${result.latency}ms)`);
+          const attempts = result.attempts && result.attempts > 1 ? `, ${result.attempts} attempts` : '';
+          console.log(`  [${icon}] ${result.testName} (${result.latency}ms${attempts})`);
+          if (result.note) {
+            console.log(gray(`      ↳ ${result.note}`));
+          }
           if (shouldShowFailureDetails(cfg, result)) {
             const requestLogs = result.requestId
               ? serverLogs.filter((log) => log.message.includes(result.requestId!))

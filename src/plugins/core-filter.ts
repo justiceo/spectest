@@ -89,6 +89,57 @@ function filterTestsByFailures(tests: TestCase[], snapshotPath?: string) {
   }
 }
 
+function isArazzo(test: TestCase | undefined): boolean {
+  return test?.source?.kind === 'arazzo';
+}
+
+function filterTestsByWorkflow(tests: TestCase[], workflows?: string[]) {
+  if (!workflows || workflows.length === 0) {
+    return tests;
+  }
+  const wanted = new Set(workflows);
+  return tests.filter((test) => isArazzo(test) && wanted.has(String(test.source!.entryWorkflowId)));
+}
+
+// Arazzo steps form a single gated chain per workflow, so selecting any step
+// (by tag, name, focus, ...) pulls in the rest of its workflow and every
+// dependency edge that touches an Arazzo node. Without this a filtered-out
+// predecessor would leave the selected step stuck as failed-precondition.
+function includeArazzoClosure(all: TestCase[], selected: TestCase[]): TestCase[] {
+  if (!all.some(isArazzo)) {
+    return selected;
+  }
+  const byId = new Map<string, TestCase>();
+  const byGroup = new Map<string, TestCase[]>();
+  for (const test of all) {
+    if (test.operationId) byId.set(test.operationId, test);
+    if (isArazzo(test)) {
+      const group = String(test.source!.group);
+      byGroup.set(group, [...(byGroup.get(group) || []), test]);
+    }
+  }
+  const included = new Set(selected);
+  const queue = [...selected];
+  while (queue.length > 0) {
+    const test = queue.pop()!;
+    const related: TestCase[] = [];
+    if (isArazzo(test)) {
+      related.push(...(byGroup.get(String(test.source!.group)) || []));
+    }
+    for (const depId of test.dependsOn || []) {
+      const dep = byId.get(depId);
+      if (dep && (isArazzo(test) || isArazzo(dep))) related.push(dep);
+    }
+    for (const candidate of related) {
+      if (!included.has(candidate)) {
+        included.add(candidate);
+        queue.push(candidate);
+      }
+    }
+  }
+  return all.filter((test) => included.has(test));
+}
+
 function shuffle<T>(arr: T[]) {
   for (let i = arr.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -130,11 +181,14 @@ export const coreFilterPlugin = (cfg: SpectestConfig): Plugin => ({
       });
 
       tests = expandRepeats(tests);
+      const expanded = tests;
+      tests = filterTestsByWorkflow(tests, cfg.workflows);
       tests = filterTestsByFocus(tests);
       tests = filterTestsByTags(tests, cfg.tags);
       tests = filterTestsByName(tests, cfg.filter);
       tests = filterTestsByHappy(tests, cfg.happy);
       tests = filterTestsByFailures(tests, cfg.snapshotFile);
+      tests = includeArazzoClosure(expanded, tests);
 
       if (cfg.randomize) {
         shuffle(tests);

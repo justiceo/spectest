@@ -1,0 +1,92 @@
+arazzo: 1.0.1
+info:
+  title: JSONPlaceholder workflows
+  version: 1.0.0
+  description: Spectest's own Arazzo dogfood suite, run by `npm test` against jsonplaceholder.typicode.com.
+sourceDescriptions:
+  - name: jsonplaceholder
+    url: ./jsonplaceholder.openapi.yaml
+    type: openapi
+workflows:
+  - workflowId: user-posts
+    summary: Look a user up, list their posts, then read the first post's comments.
+    inputs:
+      type: object
+      properties:
+        userId: { type: integer, default: 1 }
+    steps:
+      - stepId: get-user
+        operationId: getUser
+        parameters:
+          - { name: id, in: path, value: $inputs.userId }
+        successCriteria:
+          - condition: $statusCode == 200
+          - context: $response.body#/email
+            condition: '^\S+@\S+$'
+            type: regex
+        outputs:
+          id: $response.body#/id
+          username: $response.body#/username
+      - stepId: list-posts
+        operationId: listPosts
+        parameters:
+          - { name: userId, in: query, value: $steps.get-user.outputs.id }
+        successCriteria:
+          - condition: $statusCode == 200
+          - context: $response.body
+            condition: $[?@.userId == 1]
+            type: jsonpath
+        outputs:
+          firstPost: $response.body#/0/id
+      - stepId: comments
+        operationId: listComments
+        parameters:
+          - { name: id, in: path, value: $steps.list-posts.outputs.firstPost }
+        successCriteria:
+          - condition: $statusCode == 200 && $response.body#/0/postId == $steps.list-posts.outputs.firstPost
+    outputs:
+      username: $steps.get-user.outputs.username
+      firstPost: $steps.list-posts.outputs.firstPost
+
+  - workflowId: publish-post
+    summary: Create, re-read, update and delete a post (JSONPlaceholder fakes writes).
+    dependsOn: [user-posts]
+    steps:
+      - stepId: create
+        operationId: createPost
+        requestBody:
+          contentType: application/json
+          payload:
+            title: Hello from Arazzo
+            body: 'Written for {$workflows.user-posts.outputs.username}'
+            userId: 1
+        successCriteria:
+          - condition: $statusCode == 201
+          - condition: $response.body#/title == 'hello from arazzo'
+        outputs:
+          id: $response.body#/id
+      - stepId: read-back
+        description: JSONPlaceholder does not persist writes, so the new post 404s; that is expected.
+        operationId: getPost
+        parameters:
+          - { name: id, in: path, value: $steps.create.outputs.id }
+        successCriteria:
+          - condition: $statusCode == 200
+        onFailure:
+          - name: not-persisted
+            type: goto
+            stepId: update
+            criteria:
+              - condition: $statusCode == 404
+      - stepId: update
+        operationId: updatePost
+        parameters:
+          - { name: id, in: path, value: $workflows.user-posts.outputs.firstPost }
+        requestBody:
+          payload: { title: Updated by Arazzo }
+        successCriteria:
+          - condition: $statusCode == 200 && $response.body#/title == 'Updated by Arazzo'
+      - stepId: delete
+        operationId: deletePost
+        parameters:
+          - { name: id, in: path, value: $workflows.user-posts.outputs.firstPost }

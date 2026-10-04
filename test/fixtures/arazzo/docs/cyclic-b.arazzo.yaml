@@ -1,0 +1,10 @@
+arazzo: 1.0.1
+info: { title: Cyclic B, version: 1.0.0 }
+sourceDescriptions:
+  - { name: a, url: ./cyclic-a.arazzo.yaml, type: arazzo }
+  - { name: shop, url: ../shop.openapi.yaml, type: openapi }
+workflows:
+  - workflowId: b-flow
+    steps:
+      - stepId: list
+        operationId: listProducts

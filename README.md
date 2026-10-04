@@ -18,6 +18,7 @@ Spectest is a lightweight API testing CLI for writing declarative HTTP endpoint 
 * **Declarative API tests**: describe requests and expected responses with a simple `*.spectest.*` file.
 * **HTTP assertions**: validate status codes, response headers, partial JSON bodies, and Zod or JSON schemas.
 * **OpenAPI loading**: run OpenAPI 3.0/3.1 operations directly with `--openapi`.
+* **Arazzo workflows**: run [Arazzo](https://spec.openapis.org/arazzo/latest.html) 1.0/1.1 multi-step workflows (auth, checkout, payments) with full control flow; see [Running Arazzo workflows](#running-arazzo-workflows).
 * **API flow testing**: chain login, setup, teardown, and dependent requests with shared response state.
 * **Record and replay**: capture outbound `fetch`, `http`, `https`, and common Node library calls into reusable cassettes.
 * **CLI-first workflow**: run tests with `npx spectest`, filter by tags or names, randomize ordering, and snapshot failures.
@@ -242,6 +243,202 @@ npx spectest generate openapi-tests --openapi ./openapi.yaml --output ./test
 
 Writes a `.spectest.js` file with the same generated tests Spectest would run in-memory, as an editable starting point for suites that will grow real `beforeSend`/`postTest` logic by hand. Anything expressible this way is already expressible via direct `--openapi` loading — this is a convenience/onboarding command, not a coverage unlock.
 
+### Running Arazzo workflows
+
+[Arazzo](https://spec.openapis.org/arazzo/latest.html) (1.0.x and 1.1.x) describes multi-step API workflows (login → token → protected call, checkout → pay → poll → refund) on top of OpenAPI descriptions. Spectest runs Arazzo documents directly: every workflow becomes a chain of ordinary test cases, so steps get the same reporting, tags/filters, rate limiting, recording and cancellation as hand-written tests.
+
+```yaml
+# test/checkout.arazzo.yaml
+arazzo: 1.0.1
+info: { title: Checkout, version: 1.0.0 }
+sourceDescriptions:
+  - { name: shop, url: ./openapi.yaml, type: openapi }
+workflows:
+  - workflowId: login
+    inputs:
+      type: object
+      required: [username, password]
+      properties: { username: { type: string }, password: { type: string } }
+    steps:
+      - stepId: getToken
+        operationId: login
+        requestBody:
+          payload: { username: $inputs.username, password: $inputs.password }
+        successCriteria: [{ condition: $statusCode == 200 }]
+        outputs: { token: $response.body#/token }
+    outputs: { token: $steps.getToken.outputs.token }
+
+  - workflowId: checkout
+    dependsOn: [login]
+    steps:
+      - stepId: pay
+        operationId: createPayment
+        parameters:
+          - { name: Authorization, in: header, value: 'Bearer {$workflows.login.outputs.token}' }
+          - { name: Idempotency-Key, in: header, value: '{{uuid}}' }
+        requestBody: { payload: { orderId: ord-1, amount: 1000 } }
+        successCriteria: [{ condition: $statusCode == 201 }]
+        outputs: { id: $response.body#/id }
+      - stepId: poll
+        operationId: getPayment
+        parameters: [{ name: paymentId, in: path, value: $steps.pay.outputs.id }]
+        successCriteria: [{ condition: $response.body#/status == 'succeeded' }]
+        onFailure:
+          - { name: wait, type: retry, retryAfter: 1, retryLimit: 10 }
+```
+
+```bash
+# *.arazzo.{yaml,yml,json} files under testDir are discovered automatically
+npx spectest --base-url=http://localhost:3000
+
+# or point at documents explicitly, pass inputs, and pick workflows
+npx spectest --arazzo ./checkout.arazzo.yaml --arazzo-inputs ./inputs.json --workflow checkout
+```
+
+```
+🗂️  Suite: Checkout
+  [✅] login › getToken (12ms)
+  [✅] login (workflow) (0ms)
+  [✅] checkout › pay (9ms)
+  [✅] checkout › poll (2ms, 3 attempts)
+  [✅] checkout (workflow) (0ms)
+```
+
+Discovery skips sub-directories of `testDir` named `fixtures` or `node_modules`; set `arazzoFilePattern` to change the pattern, or to `''` to turn discovery off.
+
+#### How workflows map to tests
+
+* Each **step** is a test named `<workflowId> › <stepId>` with `operationId: "<workflowId>/<stepId>"`. Each workflow also gets a final **workflow** test (`operationId: "<workflowId>"`) whose result data is the workflow's evaluated `outputs`. A hand-written test can `dependsOn: ['checkout']` and read `state.completedCases.checkout.response.data`.
+* A step that calls another workflow (`workflowId`) runs that workflow's steps inline (`checkout › buy › create`), followed by the calling step's own test, which holds the child's outputs and evaluates the step's criteria against the child's last response.
+* **Control flow** follows the spec. With no `onSuccess`, the next step runs. With no `onFailure`, the workflow stops (later steps report `failed-precondition`). `end` and `goto` move the workflow on; steps that are jumped over report as skipped, with the reason. Backward `goto` loops (polling with `goto` to the same step, for example) run as numbered iterations (`poll (iteration 2)`), bounded by `x-spectest.maxIterations` / `arazzoMaxIterations` (default 10). Iterations that never run are left out of the report.
+* `retry` re-sends the step after `retryAfter` seconds (an HTTP `Retry-After` header takes precedence), up to `retryLimit` (default 1). The limit is used up before later failure actions are considered. `retry` with a `stepId` or `workflowId` runs that step or workflow first and then retries.
+* Workflow `dependsOn`, `$workflows.<id>.…` references and 1.1 step-level `dependsOn` across workflows all become dependencies, so the referenced workflow finishes first. Dependency cycles are reported and skipped.
+* `x-spectest.phase: setup | teardown` on a workflow runs it in that phase.
+* A step that can't be resolved (unknown operation, unreachable source, missing required inputs, missing hook, …) never crashes the run: its workflow is reported as skipped, with the reason on each step.
+
+#### Success criteria and contract checks
+
+`successCriteria` support all four criterion types: `simple` (operators, `[]`/`.` dereference, case-insensitive string comparison, numeric coercion, `null` only equal to `null`), `regex`, `jsonpath` (RFC 9535 by default, `draft-goessner-dispatch-jsonpath-00` on request) and `xpath` (XPath 3.1 by default, `xpath-10` on request). A failing criterion reports the values it saw, e.g. `criterion failed: $statusCode == 200 ($statusCode = 404)`.
+
+The spec defines no outcome for a step without `successCriteria`. In that case Spectest checks the response against the source OpenAPI description: the status must be documented (exact code, `2XX`-style range, or `default`), and a JSON body must match that response's schema. Set `arazzoResponseValidation` (or `x-spectest.validateResponse`) to `always` to also check steps that do have criteria, or to `never` to turn the check off.
+
+#### Inputs, sources and configuration
+
+```js
+// spectest.config.js
+export default {
+  // explicit documents (in addition to discovered *.arazzo.* files)
+  arazzo: ['./workflows/checkout.arazzo.yaml'],
+  // workflow inputs, keyed by workflowId (or a function (workflowId, { file, title }) => inputs)
+  arazzoInputs: {
+    login: { username: 'ada', password: process.env.SHOP_PASSWORD },
+  },
+  // per-source overrides, keyed by sourceDescriptions[].name
+  arazzoSources: {
+    shop: './openapi.yaml',                                       // a local copy instead of the published URL
+    payments: { url: './payments.yaml', baseUrl: 'http://localhost:4000' }, // a second API on another host
+  },
+  arazzoMaxIterations: 10,
+  arazzoResponseValidation: 'auto', // 'always' | 'never'
+};
+```
+
+Inputs are merged in this order, with later sources taking precedence: defaults declared in the workflow's `inputs` schema, `x-spectest.inputs` in the document, `arazzoInputs`, then the `--arazzo-inputs` file. The result is validated against the inputs schema, and `{{uuid}}`, `{{timestamp}}` and `{{shortId}}` placeholders are filled in. Source descriptions can be local files, `http(s)` URLs (GitHub `blob` page URLs are rewritten to the raw file) or other Arazzo documents (`type: arazzo`). Relative references resolve against the document's location, or against `$self` in 1.1. An operation's relative OpenAPI `servers` URL becomes a path prefix on `baseUrl`; set `arazzoSources.<name>.baseUrl` to send a source's operations to a different host.
+
+Optional `x-spectest` extension on the document, a workflow or a step:
+
+```yaml
+x-spectest:
+  tags: [smoke]               # added to the default tags (arazzo, arazzo:<workflowId>)
+  skip: true
+  skipReason: manual only
+  phase: setup                # workflow/document level
+  inputs: { username: ada }   # workflow level
+  maxIterations: 20           # loop bound for this workflow
+  validateResponse: always    # always | never | auto
+  security: true              # apply openapiAuth hooks (true / a variant name / none); off by default
+  beforeSend: hookName        # from openapiHooks
+  postTest: hookName
+  timeout: 5000
+  delay: 100
+  recording: replay
+  followRedirects: true       # Arazzo steps don't follow 3xx by default
+  idPrefix: 'shop:'           # document level: prefix every operationId
+```
+
+#### Spectest's reading of open points in the spec
+
+* **JSON text payloads.** A JSON string that consists of a single embedded expression, such as `"customer": "{$inputs.customer}"`, takes the value with its type (an object stays an object, a number stays a number). Other embedded expressions are inserted as text. The spec says runtime expressions preserve the type of the referenced value, and the official BNPL example relies on this.
+* **Tolerated failures.** A failure that an `onFailure` `goto`/`end`/`retry` action handles is reported as passed, with a note explaining what happened. A failed sub-workflow is handed to the calling step's `onFailure` actions when the calling step has any. Otherwise it fails the run.
+* **Redirects.** Steps don't follow redirects, because a `302` is the operation's result. Use `x-spectest.followRedirects: true` to follow them.
+* **Retries with a target.** After a `retry` that targets a workflow, `$workflows.<id>.outputs` refers to that run of the workflow (handy for refresh-token flows).
+* **Implicit inputs.** Unknown parameter names are sent as given, with a load warning when the OpenAPI operation doesn't declare a path/query parameter of that name. A path parameter that resolves to nothing fails the step with a message naming the mismatch.
+
+#### Feature support
+
+| Area | Feature | Status | Notes |
+| ---- | ------- | :----: | ----- |
+| Document | Arazzo 1.0.x | ✅ | |
+| Document | Arazzo 1.1.x | ✅ | HTTP/OpenAPI features; AsyncAPI parts are not supported (see below) |
+| Document | JSON and YAML | ✅ | |
+| Document | Validation against the official JSON Schemas | ✅ | Violations are warnings; `--arazzo-strict` makes them fatal |
+| Document | `info` | ✅ | `title` names the suite |
+| Document | `$self` (1.1) | ✅ | Base URI for relative references, and the `$self` expression |
+| Document | Specification extensions (`x-*`) | ✅ | Ignored, except `x-spectest` |
+| Sources | `type: openapi` (OpenAPI 3.0/3.1) | ✅ | Swagger 2.0 is not supported |
+| Sources | `type: arazzo` | ✅ | Workflows referenced via `$sourceDescriptions.<name>.<workflowId>`; components stay scoped to their document |
+| Sources | `type: asyncapi` (1.1) | ❌ | Steps on AsyncAPI sources are skipped with a reason |
+| Sources | Relative, absolute and `http(s)` URLs | ✅ | Plus `arazzoSources` overrides and per-source `baseUrl` |
+| Workflow | `workflowId`, `summary`, `description` | ✅ | |
+| Workflow | `inputs` (JSON Schema 2020-12) | ✅ | Defaults applied, values validated, `$ref` into `components.inputs` |
+| Workflow | `dependsOn` (local and cross-document) | ✅ | |
+| Workflow | `parameters` | ✅ | Merged into every step; steps override by `name` + `in` |
+| Workflow | `successActions` / `failureActions` | ✅ | Apply to every step; steps override by `name` |
+| Workflow | `outputs` | ✅ | Data of the workflow's final test, `$workflows.<id>.outputs`, `$outputs` |
+| Step | `operationId` (plain or `$sourceDescriptions` qualified) | ✅ | |
+| Step | `operationPath` | ✅ | A pointer to a path item with a single operation is accepted too |
+| Step | `workflowId` (call a workflow) | ✅ | Parameters become the called workflow's inputs |
+| Step | `parameters` in `path` / `query` / `header` / `cookie` | ✅ | |
+| Step | `querystring` parameters (1.1) | ✅ | |
+| Step | Reusable parameters with `value` override | ✅ | |
+| Step | `requestBody` | ✅ | JSON objects and text templates, XML templates, form objects and strings, multipart objects, plain text, whole-value expressions; content type from the operation when omitted |
+| Step | Payload `replacements` | ✅ | JSON Pointer, XPath, and JSONPath via `targetSelectorType` (1.1) |
+| Step | `successCriteria` | ✅ | |
+| Step | `onSuccess`: `end`, `goto` step, `goto` workflow | ✅ | `goto` workflow `parameters` (1.1) supported |
+| Step | `onFailure`: `end`, `goto`, `retry` | ✅ | `retryAfter`, `Retry-After`, `retryLimit`, `retry` with `stepId`/`workflowId` |
+| Step | Backward `goto` (loops) | ✅ | Unrolled iterations up to `maxIterations` |
+| Step | `outputs` (expressions and Selector Objects) | ✅ | |
+| Step | `timeout` (1.1) | ✅ | |
+| Step | `dependsOn` (1.1) | ⚠️ | Steps run in order; cross-workflow references become workflow dependencies |
+| Step | `channelPath`, `action`, `correlationId` (1.1, AsyncAPI) | ❌ | Skipped with a reason |
+| Criteria | `simple` | ✅ | All operators, `[]`, `.`, literals, `''` escapes, `{…}`-wrapped conditions |
+| Criteria | `regex` | ✅ | JavaScript `RegExp` syntax |
+| Criteria | `jsonpath` (RFC 9535, `draft-goessner-dispatch-jsonpath-00`) | ✅ | Via `json-p3` / `jsonpath-plus` |
+| Criteria | `xpath` (`xpath-31`, `xpath-30`, `xpath-20`, `xpath-10`) | ⚠️ | 3.1 engine (fontoxpath) for 2.0/3.0/3.1; true XPath 1.0 rules for `xpath-10` |
+| Criteria | Embedded expressions in regex/JSONPath/XPath (1.1) | ✅ | |
+| Criteria | `criteria` on success/failure actions | ✅ | |
+| Expressions | `$url`, `$method`, `$statusCode` | ✅ | |
+| Expressions | `$request.header/query/path/body`, `$response.header/body` (+ JSON Pointer) | ✅ | |
+| Expressions | `$inputs`, `$outputs`, `$steps.<id>.outputs`, `$workflows.<id>.inputs/outputs` (+ JSON Pointer) | ✅ | Dotted names (1.1) resolve as keys first, then as paths |
+| Expressions | `$sourceDescriptions.<name>.<reference>`, `$components.*`, `$self` | ✅ | |
+| Expressions | Embedded `{$…}` in strings | ✅ | 1.1 conversion rules (objects become JSON) |
+| Expressions | `$message` (AsyncAPI) | ❌ | |
+| Components | `inputs`, `parameters`, `successActions`, `failureActions` | ✅ | |
+| Selector Object (1.1) | `jsonpath`, `xpath`, `jsonpointer` | ✅ | In outputs, payloads, parameter values and replacement values |
+| Expression Type Object | Versions for JSONPath / XPath | ✅ | |
+
+Validated against the [official Arazzo examples](https://github.com/OAI/Arazzo-Specification/tree/main/examples/1.0.0) (pet-coupons, oauth, BNPL, FAPI-PAR, LoginAndRetrievePets, ExtendedParametersExample) and the official schema test suite; see `test/arazzo-official-examples.test.ts`. Some published examples have bugs of their own (for example a case-mismatched `operationId`, or JSONPath conditions that RFC 9535 never matches). Spectest reports those precisely, and the corrected copies in `test/fixtures/arazzo/official-corrected/` run end to end.
+
+#### Coverage and scaffolding
+
+With `--openapi <doc> --coverage-report`, operations exercised by executed Arazzo steps are reported as `covered by Arazzo step <workflow>/<step> (passed|failed)`.
+
+```bash
+npx spectest generate arazzo-tests --arazzo ./checkout.arazzo.yaml --output ./test
+```
+
+This writes an editable `.spectest.js` that runs the document through `spectest/arazzo`. The document stays the source of truth for requests, criteria and control flow. The generated file holds names, tags, timeouts and skip flags you can change. A document run this way isn't also run as a discovered `*.arazzo.*` file.
+
 ## Why Spectest
 While building an API, I kept running into the same frustrating loop: after writing comprehensive Jest tests, I still had to manually “verify” the API by running it through a frontend client.
 
@@ -291,6 +488,12 @@ That’s where Spectest was born—out of necessity.
 | `delay` | Milliseconds to wait before running | none |
 | `timeout` | Per-test timeout override | runtime `timeout` (60000ms) |
 | `recording` | Per-test HTTP recording mode override (`off`, `replay`, or `record`) | runtime `recording` |
+| `request.redirect` | `manual` to assert on a 3xx response instead of following it | `follow` |
+| `assert` | `(response, state, ctx) => string[] \| { errors?, note?, retry?, data? }`; extra assertions that keep the response on the result (unlike throwing from `postTest`) | none |
+| `retry` | `{ limit, delayMs?, shouldRetry?(result, attempt) }`; re-run the whole send/assert cycle when it fails | none |
+| `when` | `(state) => boolean \| { skip: reason }`; run the test only if the condition holds. A skip like this releases dependents instead of failing them | none |
+| `virtual` | A test that sends no request; its `assert` decides the result | `false` |
+| `quiet` | Leave the test out of results unless it actually ran | `false` |
 
 ### Config options
 
@@ -327,6 +530,15 @@ That’s where Spectest was born—out of necessity.
 | `coverageReport` (`--coverage-report`) | Print an OpenAPI contract coverage report after the run | `false` |
 | `coverageReportFile` (`--coverage-report-file`) | Write the coverage report to a file instead of stdout | none |
 | `openapiNegativeTests` (`--negative-tests` toggles `.enabled`) | `{ enabled, maxCasesPerOperation, excludeTags }` for schema-derived negative test generation | `{ enabled: false, maxCasesPerOperation: 20, excludeTags: ['real-backend'] }` |
+| `arazzo` (`--arazzo`) | Arazzo document path(s) to run, in addition to discovered `*.arazzo.{yaml,yml,json}` files | none |
+| `arazzoFilePattern` | Regex for Arazzo documents discovered under `testDir` (`''` disables discovery) | `\.arazzo\.(ya?ml\|json)$` |
+| `arazzoInputs` | Workflow inputs keyed by `workflowId`, or `(workflowId, { file, title }) => inputs` | none |
+| `arazzoInputsFile` (`--arazzo-inputs`) | JSON/YAML file of workflow inputs keyed by `workflowId`; overrides `arazzoInputs` | none |
+| `arazzoSources` | Per-`sourceDescription` overrides: a replacement path/URL, or `{ url?, baseUrl?, server? }` | none |
+| `arazzoMaxIterations` (`--arazzo-max-iterations`) | Loop bound for workflows that jump back to earlier steps | `10` |
+| `arazzoResponseValidation` (`--arazzo-response-validation`) | Check step responses against the OpenAPI schema: `auto` (only steps without `successCriteria`), `always`, `never` | `auto` |
+| `arazzoStrict` (`--arazzo-strict`) | Fail a document that doesn't conform to the Arazzo JSON Schema (otherwise: warnings) | `false` |
+| `workflows` (`--workflow`) | Only run these Arazzo workflows, plus the workflows they depend on | all |
 | `suiteFile` | Run only the specified suite file | none |
 | `projectRoot` (`--dir`) | Root directory of the project | current working directory |
 

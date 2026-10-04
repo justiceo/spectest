@@ -1,38 +1,49 @@
-import { readFile } from 'fs/promises';
-import { randomUUID } from 'crypto';
 import path from 'path';
-import { load as parseYaml } from 'js-yaml';
 import type { Plugin } from '../plugin-api.js';
 import type {
   OpenApiBeforeSendHook,
   OpenApiNegativeTestsConfig,
   OpenApiPostTestHook,
-  OpenApiRequestMutation,
-  OpenApiRequestMutator,
   SpectestConfig,
   Suite,
   TestCase,
 } from '../types.js';
+import {
+  GENERATORS,
+  HTTP_METHODS,
+  OpenApiSkip,
+  appendQuery,
+  applySecurity,
+  chooseJsonContent,
+  effectiveServerPrefix,
+  mergeCookieHeader,
+  parseOpenApiDoc,
+  resolveGeneratorPlaceholders,
+  resolveRefs,
+  setByJsonPointer,
+  stableSlug,
+  valueToString,
+  type SecurityOverride,
+} from '../openapi/document.js';
+import {
+  evaluateExchangeExpression,
+  exchangeFromResult,
+  isExchangeExpression,
+  parseRuntimeExpression,
+  type RuntimeExpression,
+} from '../runtime-expression.js';
 import { mutateObjectSchema, mutateValueForParam } from './openapi-schema-mutator.js';
 import { validateAgainstSchema } from '../openapi-schema-validate.js';
 
 const NEGATIVE_KEY_PREFIX = '__negative-';
 const DEFAULT_EXAMPLE_KEY = 'default';
 
-const HTTP_METHODS = new Set(['get', 'put', 'post', 'delete', 'options', 'head', 'patch', 'trace']);
 const DEFAULT_PARAM_STYLE: Record<string, { style: string; explode: boolean }> = {
   path: { style: 'simple', explode: false },
   query: { style: 'form', explode: true },
   header: { style: 'simple', explode: false },
   cookie: { style: 'form', explode: true },
 };
-
-class OpenApiSkip extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'OpenApiSkip';
-  }
-}
 
 type NegativeTestOverride = {
   enabled?: boolean;
@@ -89,81 +100,6 @@ type OperationEntry = {
   bodyJsonContent?: any;
   resolutionError?: OpenApiSkip;
 };
-
-type SecurityOverride = { mode: 'none' } | { mode: 'variant'; variant: string };
-
-function parseDocument(raw: string, filePath: string): any {
-  if (filePath.endsWith('.json')) {
-    return JSON.parse(raw);
-  }
-  return parseYaml(raw);
-}
-
-function assertOpenApiDocument(doc: any): void {
-  if (!doc || typeof doc !== 'object') {
-    throw new Error('OpenAPI document must be an object');
-  }
-  if (typeof doc.swagger === 'string' || String(doc.openapi || '').startsWith('2.')) {
-    throw new Error('Swagger/OpenAPI 2.0 is not supported');
-  }
-  if (!/^3\.(0|1)\.\d+/.test(String(doc.openapi || ''))) {
-    throw new Error('OpenAPI document must declare version 3.0.x or 3.1.x');
-  }
-  if (!doc.paths || typeof doc.paths !== 'object') {
-    throw new Error('OpenAPI document must include a paths object');
-  }
-}
-
-function decodePointerPart(part: string): string {
-  return part.replace(/~1/g, '/').replace(/~0/g, '~');
-}
-
-function resolvePointer(root: any, pointer: string): any {
-  if (!pointer.startsWith('#/')) {
-    throw new OpenApiSkip(`external or unsupported ref '${pointer}'`);
-  }
-  const parts = pointer.slice(2).split('/').map(decodePointerPart);
-  let current = root;
-  for (const part of parts) {
-    if (!current || typeof current !== 'object' || !(part in current)) {
-      throw new OpenApiSkip(`unresolved ref '${pointer}'`);
-    }
-    current = current[part];
-  }
-  return current;
-}
-
-function resolveRefs<T>(value: T, root: any, stack: string[] = []): T {
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => resolveRefs(item, root, stack)) as T;
-  }
-  const obj = value as any;
-  if (typeof obj.$ref === 'string') {
-    if (stack.includes(obj.$ref)) {
-      throw new OpenApiSkip(`circular ref '${obj.$ref}'`);
-    }
-    const resolved = resolvePointer(root, obj.$ref);
-    const { $ref, ...siblings } = obj;
-    return resolveRefs({ ...resolved, ...siblings }, root, [...stack, obj.$ref]) as T;
-  }
-  const result: any = {};
-  for (const [key, nested] of Object.entries(obj)) {
-    result[key] = resolveRefs(nested, root, stack);
-  }
-  return result;
-}
-
-function stableSlug(text: string): string {
-  const slug = text
-    .replace(/([a-z0-9])([A-Z])/g, '$1-$2')
-    .replace(/[^a-zA-Z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .toLowerCase();
-  return slug || 'openapi-operation';
-}
 
 function firstExample(examples: any): any {
   if (!examples || typeof examples !== 'object') return undefined;
@@ -276,31 +212,6 @@ function collectXSpectestForKey(
   return merged;
 }
 
-const GENERATORS: Record<string, () => string> = {
-  uuid: () => randomUUID(),
-  timestamp: () => String(Date.now()),
-  shortId: () => Math.random().toString(36).slice(2, 10),
-};
-
-const GENERATOR_PLACEHOLDER = /\{\{(uuid|timestamp|shortId)\}\}/g;
-
-function resolveGeneratorPlaceholders<T>(value: T): T {
-  if (typeof value === 'string') {
-    return value.replace(GENERATOR_PLACEHOLDER, (_match, generatorName: string) => GENERATORS[generatorName]()) as unknown as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => resolveGeneratorPlaceholders(item)) as unknown as T;
-  }
-  if (value && typeof value === 'object') {
-    const result: any = {};
-    for (const [k, v] of Object.entries(value as any)) {
-      result[k] = resolveGeneratorPlaceholders(v);
-    }
-    return result;
-  }
-  return value;
-}
-
 function setByPath(target: any, parts: string[], value: any): void {
   let current = target;
   for (let i = 0; i < parts.length - 1; i += 1) {
@@ -332,12 +243,6 @@ function applyGeneratorOverrides(
     generated[pathKey] = value;
   }
   return { body: result, generated };
-}
-
-function valueToString(value: any): string {
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  return JSON.stringify(value);
 }
 
 function hasDefaultSerialization(param: any): boolean {
@@ -406,11 +311,6 @@ function buildParameters(
   }
 
   return { endpointPath, query, headers, cookies, pendingLinks };
-}
-
-function chooseJsonContent(content: any): any {
-  if (!content || typeof content !== 'object') return undefined;
-  return content['application/json'];
 }
 
 function buildRequestBody(
@@ -515,126 +415,6 @@ function chooseResponse(
   };
 }
 
-function effectiveServerPrefix(doc: any, operation: any, cfg: SpectestConfig): string {
-  const servers = Array.isArray(operation.servers) ? operation.servers : doc.servers;
-  if (!Array.isArray(servers) || servers.length === 0) return '';
-
-  let selected: any;
-  if (cfg.openapiServer !== undefined) {
-    if (typeof cfg.openapiServer === 'number') {
-      selected = servers[cfg.openapiServer];
-    } else {
-      selected = servers.find((server: any) => server?.url === cfg.openapiServer);
-    }
-    if (!selected) {
-      throw new OpenApiSkip(`configured OpenAPI server '${cfg.openapiServer}' was not found`);
-    }
-  } else if (servers.length === 1) {
-    selected = servers[0];
-  } else if (operation.servers) {
-    throw new OpenApiSkip('unsupported operation-level server override');
-  } else {
-    return '';
-  }
-
-  const serverUrl = String(selected?.url || '');
-  if (!serverUrl || /^https?:\/\//i.test(serverUrl)) {
-    return '';
-  }
-  return serverUrl.replace(/\/$/, '');
-}
-
-function mergeCookieHeader(headers: Record<string, string>, cookies: Record<string, string>): void {
-  const cookieEntries = Object.entries(cookies);
-  if (cookieEntries.length === 0) return;
-  const cookieValue = cookieEntries.map(([key, value]) => `${key}=${value}`).join('; ');
-  headers.Cookie = headers.Cookie ? `${headers.Cookie}; ${cookieValue}` : cookieValue;
-}
-
-function applyMutation(
-  headers: Record<string, string>,
-  query: URLSearchParams,
-  requestMeta: { credentials?: RequestCredentials },
-  mutation?: OpenApiRequestMutation | void
-): void {
-  if (!mutation) return;
-  if (mutation.headers) {
-    for (const [key, value] of Object.entries(mutation.headers as Record<string, string>)) {
-      headers[key] = String(value);
-    }
-  }
-  if (mutation.query) {
-    for (const [key, value] of Object.entries(mutation.query)) {
-      query.set(key, value);
-    }
-  }
-  if (mutation.cookies) {
-    mergeCookieHeader(headers, mutation.cookies);
-  }
-  if (mutation.credentials) {
-    requestMeta.credentials = mutation.credentials;
-  }
-}
-
-function resolveAuthHook(hooksEntry: any, variantName: string | undefined): OpenApiRequestMutator | undefined {
-  if (typeof hooksEntry === 'function') {
-    return variantName ? undefined : hooksEntry;
-  }
-  if (hooksEntry && typeof hooksEntry === 'object') {
-    const key = variantName || 'valid';
-    return typeof hooksEntry[key] === 'function' ? hooksEntry[key] : undefined;
-  }
-  return undefined;
-}
-
-async function applySecurity(
-  cfg: SpectestConfig,
-  doc: any,
-  operation: any,
-  method: string,
-  pathKey: string,
-  headers: Record<string, string>,
-  query: URLSearchParams,
-  requestMeta: { credentials?: RequestCredentials },
-  securityOverride?: SecurityOverride
-): Promise<void> {
-  if (securityOverride?.mode === 'none') return;
-  const security = operation.security ?? doc.security;
-  if (!Array.isArray(security) || security.length === 0) return;
-  const schemes = doc.components?.securitySchemes || {};
-  const variantName = securityOverride?.mode === 'variant' ? securityOverride.variant : undefined;
-
-  for (const requirement of security) {
-    const entries = Object.keys(requirement || {});
-    if (entries.length === 0) return;
-    const hooks = cfg.openapiAuth || {};
-    const resolvedHooks = entries.map((schemeName) => resolveAuthHook(hooks[schemeName], variantName));
-    const hasAllHooks = resolvedHooks.every((hook) => typeof hook === 'function');
-    if (!hasAllHooks) continue;
-
-    for (let i = 0; i < entries.length; i += 1) {
-      const schemeName = entries[i];
-      const mutation = await resolvedHooks[i]!({
-        schemeName,
-        scheme: schemes[schemeName],
-        operation,
-        method: method.toUpperCase(),
-        path: pathKey,
-      });
-      applyMutation(headers, query, requestMeta, mutation);
-    }
-    return;
-  }
-
-  throw new OpenApiSkip(variantName ? `missing auth hook variant '${variantName}' for required scheme` : 'missing auth hook');
-}
-
-function appendQuery(endpoint: string, query: URLSearchParams): string {
-  const queryString = query.toString();
-  if (!queryString) return endpoint;
-  return `${endpoint}${endpoint.includes('?') ? '&' : '?'}${queryString}`;
-}
-
 function skippedTest(name: string, operationId: string, endpoint: string, tags: string[], reason: string): TestCase {
   return {
     name,
@@ -669,95 +449,30 @@ function resolveHooks(
   return result;
 }
 
-type ParsedRuntimeExpression =
-  | { kind: 'body'; pointer: string }
-  | { kind: 'header'; name: string }
-  | { kind: 'requestBody'; pointer: string }
-  | { kind: 'requestHeader'; name: string }
-  | { kind: 'generated'; name: string }
-  | { kind: 'state'; name: string };
-
-function parseRuntimeExpression(expression: string): ParsedRuntimeExpression | undefined {
-  const bodyMatch = /^\$response\.body#(\/.*)$/.exec(expression);
-  if (bodyMatch) return { kind: 'body', pointer: bodyMatch[1] };
-  const headerMatch = /^\$response\.header\.(.+)$/.exec(expression);
-  if (headerMatch) return { kind: 'header', name: headerMatch[1] };
-  // source a value the linked operation *sent*, not only what it returned.
-  // `$request.body#/...` and `$request.header.<name>` are part of the OpenAPI
-  // runtime-expression grammar. `$request.path.<name>` is intentionally
-  // unsupported: the source operation's URL is already substituted, so the
-  // original path value can't be recovered losslessly.
-  const requestBodyMatch = /^\$request\.body#(\/.*)$/.exec(expression);
-  if (requestBodyMatch) return { kind: 'requestBody', pointer: requestBodyMatch[1] };
-  const requestHeaderMatch = /^\$request\.header\.(.+)$/.exec(expression);
-  if (requestHeaderMatch) return { kind: 'requestHeader', name: requestHeaderMatch[1] };
-  // reference a value produced by `x-spectest.generate` on the source op
-  // that did not surface in its request body (values that did are reachable via
-  // `$request.body#/...`).
-  const generatedMatch = /^\$generated\.(.+)$/.exec(expression);
-  if (generatedMatch) return { kind: 'generated', name: generatedMatch[1] };
-  // reference a value captured into run state (e.g. by captureFromLogs).
-  const stateMatch = /^\$state\.(.+)$/.exec(expression);
-  if (stateMatch) return { kind: 'state', name: stateMatch[1] };
-  return undefined;
-}
-
-function getByJsonPointer(data: any, pointer: string): any {
-  if (!pointer || pointer === '/') return data;
-  const parts = pointer.replace(/^\//, '').split('/').map(decodePointerPart);
-  let current = data;
-  for (const part of parts) {
-    if (current === null || current === undefined) return undefined;
-    current = current[part];
-  }
-  return current;
-}
-
-function setByJsonPointer(target: any, pointer: string, value: any): void {
-  const parts = pointer.replace(/^\//, '').split('/').map(decodePointerPart);
-  let current = target;
-  for (let i = 0; i < parts.length - 1; i += 1) {
-    const part = parts[i];
-    if (typeof current[part] !== 'object' || current[part] === null) {
-      current[part] = {};
-    }
-    current = current[part];
-  }
-  current[parts[parts.length - 1]] = value;
-}
-
-function getHeaderValue(headers: any, name: string): any {
-  if (!headers) return undefined;
-  if (typeof headers.get === 'function') {
-    return headers.get(name) ?? headers.get(name.toLowerCase());
-  }
-  const entry = Object.entries(headers).find(([k]) => k.toLowerCase() === name.toLowerCase());
-  return entry ? entry[1] : undefined;
-}
-
+// `$request.path.<name>` is intentionally unsupported for links: the source
+// operation's URL is already substituted, so the original path value can't be
+// recovered losslessly. Workflow-scoped roots ($inputs, $steps, ...) only exist
+// in Arazzo documents.
 function resolveRuntimeExpression(expression: string, completedResult: any, state?: any): any {
-  const parsed = parseRuntimeExpression(expression);
-  if (!parsed) {
+  let parsed: RuntimeExpression;
+  try {
+    parsed = parseRuntimeExpression(expression);
+  } catch {
     throw new Error(`unsupported link runtime expression '${expression}'`);
   }
-  switch (parsed.kind) {
-    case 'body':
-      return getByJsonPointer(completedResult?.response?.data, parsed.pointer);
-    case 'header':
-      return getHeaderValue(completedResult?.response?.headers, parsed.name);
-    // The completed result stores the outbound axios `config` as `.request`
-    // (see cli.ts): `.request.data` is the sent body, `.request.headers` the
-    // sent headers.
-    case 'requestBody':
-      return getByJsonPointer(completedResult?.request?.data, parsed.pointer);
-    case 'requestHeader':
-      return getHeaderValue(completedResult?.request?.headers, parsed.name);
-    case 'generated':
-      return completedResult?.generatedValues?.[parsed.name];
-    // run-level state, not tied to a source's completed result.
-    case 'state':
-      return state?.[parsed.name];
+  if (parsed.root === 'generated') {
+    // a value produced by `x-spectest.generate` on the source op that did not
+    // surface in its request body (values that did are reachable via `$request.body#/...`).
+    return completedResult?.generatedValues?.[parsed.name];
   }
+  if (parsed.root === 'state') {
+    // run-level state (e.g. captured by captureFromLogs), not tied to a source's completed result.
+    return state?.[parsed.name];
+  }
+  if (!isExchangeExpression(parsed) || (parsed.root === 'request' && parsed.part === 'path')) {
+    throw new Error(`unsupported link runtime expression '${expression}'`);
+  }
+  return evaluateExchangeExpression(parsed, exchangeFromResult(completedResult));
 }
 
 function applyPendingLinks(config: any, state: any, pendingLinks: PendingLink[]): any {
@@ -946,7 +661,7 @@ async function buildTestForExample(
       linkIndex.get(rawOperationId),
       operationIdToGeneratedIds
     );
-    const serverPrefix = effectiveServerPrefix(doc, resolvedOperation, cfg);
+    const serverPrefix = effectiveServerPrefix(doc, resolvedOperation, cfg.openapiServer);
     const { endpointPath, query, headers, cookies, pendingLinks } = buildParameters(pathKey, parameters, key, paramCandidates);
     mergeCookieHeader(headers, cookies);
 
@@ -1052,13 +767,6 @@ function assertUniqueOperationIds(suites: Suite[]): void {
       seen.set(test.operationId, suite.name);
     }
   }
-}
-
-async function parseOpenApiDoc(filePath: string): Promise<any> {
-  const raw = await readFile(filePath, 'utf8');
-  const doc = parseDocument(raw, filePath);
-  assertOpenApiDocument(doc);
-  return doc;
 }
 
 function lowestDocumented4xx(responses: any): number | undefined {

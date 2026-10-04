@@ -1,0 +1,323 @@
+openapi: 3.1.0
+info:
+  title: Shop API (Spectest Arazzo fixture)
+  version: 1.0.0
+servers:
+  - url: /api
+security:
+  - bearer: []
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        '200':
+          description: Logged in
+          headers:
+            X-Session-Expires: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token: { type: string }
+                  refreshToken: { type: string }
+        '401':
+          description: Bad credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /oauth/token:
+    post:
+      operationId: getToken
+      security: []
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                grant_type: { type: string }
+                client_id: { type: string }
+                client_secret: { type: string }
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: Token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token]
+                properties:
+                  access_token: { type: string }
+                  token_type: { type: string }
+  /me:
+    get:
+      operationId: getMe
+      parameters:
+        - { name: Authorization, in: header, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, email]
+                properties:
+                  id: { type: integer }
+                  email: { type: string }
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /products:
+    get:
+      operationId: listProducts
+      security: []
+      parameters:
+        - { name: tag, in: query, schema: { type: array, items: { type: string } } }
+        - { name: page, in: query, schema: { type: integer } }
+      responses:
+        '200':
+          description: Products
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Product' }
+  /products/{productId}:
+    parameters:
+      - { name: productId, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: getProduct
+      security: []
+      responses:
+        '200':
+          description: Product
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Product' }
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /search:
+    get:
+      operationId: search
+      security: []
+      responses:
+        '200':
+          description: Echoes the query string
+          content:
+            application/json:
+              schema: { type: object }
+  /orders:
+    post:
+      operationId: createOrder
+      parameters:
+        - { name: Authorization, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [productId, quantity]
+              properties:
+                productId: { type: integer }
+                quantity: { type: integer }
+                couponCode: { type: string }
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /orders/{orderId}:
+    parameters:
+      - { name: orderId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getOrder
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '404':
+          description: Not found
+    delete:
+      operationId: deleteOrder
+      responses:
+        '204':
+          description: Deleted
+  /payments:
+    post:
+      operationId: createPayment
+      parameters:
+        - { name: Idempotency-Key, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, amount]
+              properties:
+                orderId: { type: string }
+                amount: { type: number }
+                currency: { type: string }
+      responses:
+        '201':
+          description: Payment created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+        '402':
+          description: Declined
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /payments/{paymentId}:
+    parameters:
+      - { name: paymentId, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getPayment
+      responses:
+        '200':
+          description: Payment
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Payment' }
+  /payments/{paymentId}/refunds:
+    parameters:
+      - { name: paymentId, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: refundPayment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '201':
+          description: Refunded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  status: { type: string }
+  /flaky:
+    get:
+      operationId: getFlaky
+      security: []
+      responses:
+        '200':
+          description: Eventually OK
+          content:
+            application/json:
+              schema: { type: object }
+        '503':
+          description: Try again
+  /inventory:
+    get:
+      operationId: getInventoryXml
+      security: []
+      responses:
+        '200':
+          description: Inventory as XML
+          content:
+            application/xml:
+              schema: { type: string }
+  /xml/echo:
+    post:
+      operationId: echoXml
+      security: []
+      requestBody:
+        content:
+          application/xml:
+            schema: { type: string }
+      responses:
+        '200':
+          description: Echo
+          content:
+            application/xml:
+              schema: { type: string }
+  /echo:
+    post:
+      operationId: echo
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        '200':
+          description: Echoes the request
+          content:
+            application/json:
+              schema: { type: object }
+  /undocumented-status:
+    get:
+      operationId: getTeapot
+      security: []
+      responses:
+        '200':
+          description: OK
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Product:
+      type: object
+      required: [id, name, price]
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        price: { type: number }
+        tags: { type: array, items: { type: string } }
+    Order:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string }
+        productId: { type: integer }
+        quantity: { type: integer }
+        couponCode: { type: [string, 'null'] }
+        status: { type: string, enum: [placed, paid, cancelled] }
+        total: { type: number }
+    Payment:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string }
+        orderId: { type: string }
+        amount: { type: number }
+        status: { type: string, enum: [processing, succeeded, failed, refunded] }

@@ -1,0 +1,300 @@
+arazzo: 1.0.1
+info:
+  title: Shop control flows
+  version: 1.0.0
+  description: Spectest fixture covering Arazzo control flow against test/support/shop-server.ts.
+sourceDescriptions:
+  - name: shop
+    url: ./shop.openapi.yaml
+    type: openapi
+x-spectest:
+  tags: [shop]
+workflows:
+  # Inputs from x-spectest.inputs + schema defaults; outputs from body and headers.
+  - workflowId: auth
+    inputs:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, default: ada }
+        password: { type: string }
+    x-spectest:
+      inputs: { password: secret }
+    steps:
+      - stepId: login
+        operationId: login
+        requestBody:
+          contentType: application/json
+          payload: { username: $inputs.username, password: $inputs.password }
+        successCriteria:
+          - condition: $statusCode == 200
+          - context: $response.body
+            condition: $[?match(@, 'tok-.*')]
+            type: jsonpath
+        outputs:
+          token: $response.body#/token
+          expires: $response.header.X-Session-Expires
+      - stepId: whoami
+        operationId: getMe
+        parameters:
+          - { name: Authorization, in: header, value: 'Bearer {$steps.login.outputs.token}' }
+        successCriteria:
+          - condition: $statusCode == 200 && $response.body.email == 'ADA@example.com'
+    outputs:
+      token: $steps.login.outputs.token
+      expires: $steps.login.outputs.expires
+
+  # Cross-workflow data via $workflows (implicit + explicit dependsOn) and a polling retry.
+  - workflowId: checkout
+    dependsOn: [auth]
+    steps:
+      - stepId: order
+        operationId: createOrder
+        parameters:
+          - { name: Authorization, in: header, value: 'Bearer {$workflows.auth.outputs.token}' }
+        requestBody:
+          payload: { productId: 1, quantity: 2 }
+        successCriteria: [{ condition: $statusCode == 201 }]
+        outputs: { id: $response.body#/id, total: $response.body#/total, location: $response.header.Location }
+      - stepId: pay
+        operationId: createPayment
+        parameters:
+          - { name: Idempotency-Key, in: header, value: 'key-{$steps.order.outputs.id}' }
+        requestBody:
+          payload: { orderId: $steps.order.outputs.id, amount: $steps.order.outputs.total }
+        successCriteria: [{ condition: $statusCode == 201 }]
+        outputs: { id: $response.body#/id }
+      - stepId: poll
+        operationId: getPayment
+        parameters: [{ name: paymentId, in: path, value: $steps.pay.outputs.id }]
+        successCriteria:
+          - condition: $response.body#/status == 'succeeded'
+        onFailure:
+          - name: still-processing
+            type: retry
+            retryAfter: 0
+            retryLimit: 5
+            criteria: [{ condition: $response.body#/status == 'processing' }]
+      - stepId: refund
+        operationId: refundPayment
+        parameters: [{ name: paymentId, in: path, value: $steps.pay.outputs.id }]
+        requestBody: { payload: { reason: e2e } }
+        successCriteria: [{ condition: $statusCode == 201 }]
+        outputs: { status: $response.body#/status }
+    outputs:
+      order: $steps.order.outputs.id
+      payment: $steps.pay.outputs.id
+      refund: $steps.refund.outputs.status
+
+  # Backward goto: the check step loops (unrolled iterations) until the payment succeeds.
+  - workflowId: poll-loop
+    dependsOn: [auth]
+    steps:
+      - stepId: order
+        operationId: createOrder
+        parameters:
+          - { name: Authorization, in: header, value: 'Bearer {$workflows.auth.outputs.token}' }
+        requestBody: { payload: { productId: 2, quantity: 1 } }
+        outputs: { id: $response.body#/id }
+      - stepId: pay
+        operationId: createPayment
+        parameters:
+          - { name: Idempotency-Key, in: header, value: 'loop-{$steps.order.outputs.id}' }
+        requestBody: { payload: { orderId: $steps.order.outputs.id, amount: 120 } }
+        outputs: { id: $response.body#/id }
+      - stepId: check
+        operationId: getPayment
+        parameters: [{ name: paymentId, in: path, value: $steps.pay.outputs.id }]
+        successCriteria: [{ condition: $statusCode == 200 }]
+        onSuccess:
+          - name: again
+            type: goto
+            stepId: check
+            criteria: [{ condition: $response.body#/status == 'processing' }]
+        outputs: { status: $response.body#/status }
+      - stepId: done
+        operationId: getOrder
+        parameters: [{ name: orderId, in: path, value: $steps.order.outputs.id }]
+        successCriteria: [{ condition: $statusCode == 200 }]
+    outputs:
+      finalStatus: $steps.check.outputs.status
+
+  # onSuccess end: the second step never runs.
+  - workflowId: early-end
+    steps:
+      - stepId: kittens
+        operationId: listProducts
+        parameters: [{ name: tag, in: query, value: [kitten] }]
+        successCriteria: [{ condition: $statusCode == 200 }]
+        onSuccess:
+          - name: found-one
+            type: end
+            criteria:
+              - context: $response.body
+                condition: $[?@.name == 'Tabby']
+                type: jsonpath
+      - stepId: never
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 3 }]
+
+  # Forward goto skips the middle step.
+  - workflowId: branching
+    steps:
+      - stepId: pick
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 1 }]
+        successCriteria: [{ condition: $statusCode == 200 }]
+        onSuccess:
+          - name: expensive
+            type: goto
+            stepId: premium
+            criteria: [{ condition: $response.body#/price > 100 }]
+        outputs: { id: $response.body#/id }
+      - stepId: budget
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 3 }]
+      - stepId: premium
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: $steps.pick.outputs.id }]
+        successCriteria: [{ condition: $response.body#/name == 'dalmatian' }]
+
+  # Retry with stepId: a 401 runs the refresh step, then retries the call.
+  - workflowId: refresh-retry
+    steps:
+      - stepId: me
+        operationId: getMe
+        parameters:
+          - { name: Authorization, in: header, value: 'Bearer {$steps.refresh.outputs.access_token}' }
+        successCriteria: [{ condition: $statusCode == 200 }]
+        onSuccess:
+          - { name: done, type: end }
+        onFailure:
+          - name: refresh-token
+            type: retry
+            stepId: refresh
+            retryLimit: 1
+            criteria: [{ condition: $statusCode == 401 }]
+      - stepId: refresh
+        operationId: getToken
+        requestBody:
+          contentType: application/x-www-form-urlencoded
+          payload: { grant_type: client_credentials, client_id: id, client_secret: sec }
+        successCriteria: [{ condition: $statusCode == 200 }]
+        outputs: { access_token: $response.body#/access_token }
+
+  # Retry with workflowId: each 503 runs the warm-up workflow before retrying.
+  - workflowId: retry-workflow
+    steps:
+      - stepId: flaky
+        operationId: getFlaky
+        successCriteria: [{ condition: $statusCode == 200 }]
+        onFailure:
+          - name: warm-up
+            type: retry
+            workflowId: warmup
+            retryLimit: 3
+            criteria: [{ condition: $statusCode == 503 }]
+        outputs: { calls: $response.body#/calls }
+    outputs: { calls: $steps.flaky.outputs.calls, warmed: $workflows.warmup.outputs.count }
+  - workflowId: warmup
+    x-spectest:
+      skip: false
+    steps:
+      - stepId: list
+        operationId: listProducts
+        successCriteria: [{ condition: $statusCode == 200 }]
+        outputs: { count: $response.body#/2/id }
+    outputs: { count: $steps.list.outputs.count }
+
+  # A workflow step: inputs from step parameters, $outputs from the child, criteria on the child's last response.
+  - workflowId: subflow
+    dependsOn: [auth]
+    steps:
+      - stepId: buy
+        workflowId: place-order
+        parameters:
+          - { name: product, value: 2 }
+          - { name: token, value: $workflows.auth.outputs.token }
+        successCriteria: [{ condition: $statusCode == 201 }]
+        outputs: { orderId: $outputs.orderId }
+      - stepId: confirm
+        operationId: getOrder
+        parameters:
+          - { name: orderId, in: path, value: $steps.buy.outputs.orderId }
+        successCriteria: [{ condition: $response.body#/productId == 2 }]
+    outputs: { orderId: $steps.buy.outputs.orderId }
+  - workflowId: place-order
+    x-spectest:
+      skip: true
+      skipReason: only used as a sub-workflow
+    inputs:
+      type: object
+      required: [product, token]
+      properties:
+        product: { type: integer }
+        quantity: { type: integer, default: 1 }
+        token: { type: string }
+    steps:
+      - stepId: create
+        operationId: createOrder
+        parameters:
+          - { name: Authorization, in: header, value: 'Bearer {$inputs.token}' }
+        requestBody:
+          payload: { productId: $inputs.product, quantity: $inputs.quantity }
+        successCriteria: [{ condition: $statusCode == 201 }]
+        outputs: { id: $response.body#/id }
+    outputs: { orderId: $steps.create.outputs.id }
+
+  # A failing sub-workflow is handed to the calling step's onFailure (goto fallback).
+  - workflowId: subflow-recovers
+    steps:
+      - stepId: lookup
+        workflowId: find-product
+        parameters: [{ name: id, value: 999 }]
+        onFailure:
+          - { name: use-fallback, type: goto, stepId: fallback }
+      - stepId: never
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 1 }]
+      - stepId: fallback
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 3 }]
+        successCriteria: [{ condition: $response.body#/name == 'Goldfish' }]
+  - workflowId: find-product
+    x-spectest: { skip: true }
+    inputs: { type: object, properties: { id: { type: integer } } }
+    steps:
+      - stepId: get
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: $inputs.id }]
+        successCriteria: [{ condition: $statusCode == 200 }]
+
+  # Unconditional backward goto runs out of iterations.
+  - workflowId: endless
+    x-spectest: { maxIterations: 3 }
+    steps:
+      - stepId: spin
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 3 }]
+        onSuccess:
+          - { name: again, type: goto, stepId: spin }
+
+  # Unhandled failure: later steps never run.
+  - workflowId: broken
+    steps:
+      - stepId: missing
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 404 }]
+        successCriteria: [{ condition: $statusCode == 200 }]
+      - stepId: after
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 1 }]
+
+  # No successCriteria: the response is checked against the OpenAPI contract.
+  - workflowId: contract
+    steps:
+      - stepId: documented
+        operationId: getProduct
+        parameters: [{ name: productId, in: path, value: 2 }]
+      - stepId: undocumented
+        operationId: getTeapot

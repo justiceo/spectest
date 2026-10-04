@@ -1,0 +1,11 @@
+arazzo: 1.0.1
+info: { title: Cyclic A, version: 1.0.0 }
+sourceDescriptions:
+  - { name: b, url: ./cyclic-b.arazzo.yaml, type: arazzo }
+  - { name: shop, url: ../shop.openapi.yaml, type: openapi }
+workflows:
+  - workflowId: a-flow
+    dependsOn: [$sourceDescriptions.b.b-flow]
+    steps:
+      - stepId: call-b
+        workflowId: $sourceDescriptions.b.b-flow
